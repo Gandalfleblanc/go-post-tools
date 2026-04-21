@@ -45,7 +45,7 @@ import (
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
-const Version = "1.2.27"
+const Version = "1.2.28"
 
 type App struct {
 	ctx         context.Context
@@ -772,20 +772,24 @@ func (a *App) ParseFilename(filename string) *parser.FileInfo {
 // --- Hydracker meta ---
 
 func (a *App) GetMetaQualities() ([]api.Quality, error) {
+	a.resetCancellation()
 	return a.client.GetQualities()
 }
 
 func (a *App) GetMetaLangs() ([]api.Lang, error) {
+	a.resetCancellation()
 	return a.client.GetLangs()
 }
 
 func (a *App) GetMetaSubs() ([]api.Lang, error) {
+	a.resetCancellation()
 	return a.client.GetSubs()
 }
 
 // --- Hydracker search ---
 
 func (a *App) HydrackerSearch(query string) ([]api.PartialTitle, error) {
+	a.resetCancellation()
 	result, err := a.client.Search(query, 10)
 	if err != nil {
 		return nil, err
@@ -794,10 +798,12 @@ func (a *App) HydrackerSearch(query string) ([]api.PartialTitle, error) {
 }
 
 func (a *App) HydrackerGetByTmdbID(tmdbID int) (*api.PartialTitle, error) {
+	a.resetCancellation()
 	return a.client.GetTitleByTmdbID(tmdbID)
 }
 
 func (a *App) HydrackerGetByID(id int) (*api.PartialTitle, error) {
+	a.resetCancellation()
 	title, err := a.client.GetTitle(id, 0, 0, false)
 	if err != nil {
 		return nil, err
@@ -980,6 +986,7 @@ func (a *App) GetMyUsername() (string, error) {
 }
 
 func (a *App) FicheGetContent(titleID int) (*FicheContent, error) {
+	a.resetCancellation()
 	f := api.ContentFilter{}
 	out := &FicheContent{}
 	logErr := func(kind string, err error) {
@@ -1252,6 +1259,7 @@ type FindHydrackerSourcesResult struct {
 // FindHydrackerSources interroge les 3 endpoints content (liens/nzbs/torrents) pour un titre
 // (et éventuellement saison/épisode) et retourne toutes les sources disponibles.
 func (a *App) FindHydrackerSources(titleID, saison, episode int) (*FindHydrackerSourcesResult, error) {
+	a.resetCancellation()
 	if titleID <= 0 {
 		return nil, fmt.Errorf("title_id manquant")
 	}
