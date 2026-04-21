@@ -565,6 +565,7 @@
 
     // 1. Parser le nom de fichier
     fileInfo = await ParseFilename(filename)
+    addLog('TMDB', `parse : title="${fileInfo?.title || ''}" year="${fileInfo?.year || ''}" S${fileInfo?.season || 0}E${fileInfo?.episode || 0}`)
     if (fileInfo?.season) postSeason = fileInfo.season
     if (fileInfo?.episode) postEpisode = fileInfo.episode
 
@@ -572,7 +573,11 @@
     if (path) await analyzeMediaInfoFromPath(path)
 
     // 3. Recherche TMDB automatique
-    if (fileInfo?.title) await autoSearchTMDB(fileInfo.title)
+    if (fileInfo?.title) {
+      await autoSearchTMDB(fileInfo.title)
+    } else {
+      addLog('TMDB', '⚠ pas de titre extrait du nom de fichier — recherche auto annulée')
+    }
   }
 
   // --- MediaInfo via Go filesystem ---
@@ -652,16 +657,19 @@
   // --- TMDB ---
   async function autoSearchTMDB(query) {
     tmdbSearchLoading = true
+    addLog('TMDB', `🔍 Recherche auto : "${query}"${fileInfo?.year ? ' (' + fileInfo.year + ')' : ''}`)
     try {
       // Recherche via mediasearch (plus fiable, inclut le tmdb_id directement)
       const year = fileInfo?.year || ''
       const q = year ? `${query} ${year}` : query
       let spResults = []
       try { spResults = await MediaSearch(q) || [] } catch(e) { addLog('TMDB', '⚠ mediasearch: ' + e) }
+      addLog('TMDB', `mediasearch : ${spResults.length} résultat(s)`)
 
       if (spResults.length === 0) {
         // Fallback sur TMDB direct si mediasearch ne trouve rien
-        tmdbResults = await TMDBSearch(query) || []
+        try { tmdbResults = await TMDBSearch(query) || [] } catch(e) { addLog('TMDB', '✗ TMDB API : ' + e); tmdbResults = [] }
+        addLog('TMDB', `TMDB API : ${tmdbResults.length} résultat(s)`)
       } else {
         // Convertit les résultats mediasearch en objets compatibles TMDB pour la modal
         tmdbResults = spResults.map(r => ({
