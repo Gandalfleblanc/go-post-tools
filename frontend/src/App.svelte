@@ -821,7 +821,7 @@
           <!-- LiHDL Index (URL + Basic Auth) — protégée par mot de passe -->
           <div class="section">
             <div class="section-header">
-              <span>🔒 LiHDL Index + recherche TMDB</span>
+              <span>🔒 Index + recherche TMDB</span>
               {#if lihdlUnlocked}
                 <div style="display:flex;gap:6px">
                   {#if !lihdlManaged}
