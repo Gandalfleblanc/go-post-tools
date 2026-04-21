@@ -34,8 +34,10 @@ var (
 // Search interroge le endpoint de recherche configuré pour trouver un film/série.
 // searchURL doit se terminer par ?query= ou similaire — query sera concaténée après.
 func Search(searchURL, query string) ([]SearchResult, error) {
+	// Si URL non configurée, renvoie liste vide sans erreur pour que le
+	// caller puisse fallback sur TMDB direct sans log d'erreur parasite.
 	if searchURL == "" {
-		return nil, fmt.Errorf("URL de recherche non configurée (Réglages)")
+		return nil, nil
 	}
 	q := url.QueryEscape(query)
 	u := searchURL + q
