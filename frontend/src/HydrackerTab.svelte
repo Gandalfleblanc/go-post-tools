@@ -1708,7 +1708,7 @@
   }
 
   /* Left col */
-  .col-left { display: flex; flex-direction: column; gap: 10px; position: sticky; top: 12px; }
+  .col-left { display: flex; flex-direction: column; gap: 10px; }
   .poster-wrap {
     width: 260px; aspect-ratio: 2/3; border-radius: 10px; overflow: hidden;
     background: var(--bg2);
