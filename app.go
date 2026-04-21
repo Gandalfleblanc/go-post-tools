@@ -2,6 +2,9 @@ package main
 
 import (
 	"context"
+	"archive/tar"
+	"archive/zip"
+	"compress/gzip"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
@@ -42,7 +45,7 @@ import (
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
-const Version = "1.2.19"
+const Version = "1.2.21"
 
 type App struct {
 	ctx         context.Context
@@ -202,16 +205,209 @@ func (a *App) DownloadUpdate() (string, error) {
 	}
 	emit("done", "Téléchargement terminé", 100)
 
-	// Ouvrir le dossier Téléchargements au bon fichier
+	// Auto-install : extrait l'archive, lance un helper qui remplace l'app
+	// et relance la nouvelle version après la fermeture de l'app courante.
+	emit("install", "Installation de la mise à jour…", 100)
+	if err := a.applyUpdate(outPath); err != nil {
+		// Fallback : on ouvre juste le dossier si l'auto-install échoue
+		switch runtime.GOOS {
+		case "darwin":
+			_ = exec.Command("open", "-R", outPath).Run()
+		case "linux":
+			_ = exec.Command("xdg-open", downloads).Run()
+		case "windows":
+			_ = exec.Command("explorer", "/select,", outPath).Run()
+		}
+		return outPath, fmt.Errorf("auto-install échoué (%w) — fichier dans ~/Downloads, installe manuellement", err)
+	}
+	// applyUpdate a démarré le helper et va quitter l'app. L'UI peut afficher
+	// "Redémarrage…" — l'app se ferme dans ~1s.
+	return outPath, nil
+}
+
+// applyUpdate extrait l'archive téléchargée et lance un helper script qui remplace
+// l'app courante puis relance la nouvelle version. L'app elle-même quitte ensuite.
+func (a *App) applyUpdate(archivePath string) error {
+	exe, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	// Résout les symlinks pour avoir le vrai chemin (ex: /Applications/X.app/Contents/MacOS/X)
+	if resolved, err := filepath.EvalSymlinks(exe); err == nil {
+		exe = resolved
+	}
+
+	tmp, err := os.MkdirTemp("", "gpt-update-")
+	if err != nil {
+		return err
+	}
+
 	switch runtime.GOOS {
 	case "darwin":
-		_ = exec.Command("open", "-R", outPath).Run()
+		// Archive = .zip contenant "Go Post Tools.app"
+		if err := unzipTo(archivePath, tmp); err != nil {
+			return fmt.Errorf("unzip: %w", err)
+		}
+		newApp := filepath.Join(tmp, "Go Post Tools.app")
+		// Le binaire courant est .../Go Post Tools.app/Contents/MacOS/Go Post Tools
+		// L'app bundle est donc 3 dossiers plus haut.
+		appBundle := exe
+		for i := 0; i < 3; i++ {
+			appBundle = filepath.Dir(appBundle)
+		}
+		helper := filepath.Join(tmp, "install.sh")
+		script := fmt.Sprintf(`#!/bin/bash
+sleep 2
+rm -rf %q
+cp -R %q %q
+xattr -cr %q 2>/dev/null
+open %q
+`, appBundle, newApp, appBundle, appBundle, appBundle)
+		if err := os.WriteFile(helper, []byte(script), 0755); err != nil {
+			return err
+		}
+		cmd := exec.Command("/bin/bash", helper)
+		cmd.Stdout = nil
+		cmd.Stderr = nil
+		if err := cmd.Start(); err != nil {
+			return err
+		}
+
 	case "linux":
-		_ = exec.Command("xdg-open", downloads).Run()
+		// Archive = .tar.gz contenant le binaire "Go Post Tools"
+		if err := untarGzTo(archivePath, tmp); err != nil {
+			return fmt.Errorf("untar: %w", err)
+		}
+		newBin := filepath.Join(tmp, "Go Post Tools")
+		helper := filepath.Join(tmp, "install.sh")
+		script := fmt.Sprintf(`#!/bin/bash
+sleep 2
+cp -f %q %q
+chmod +x %q
+nohup %q >/dev/null 2>&1 &
+`, newBin, exe, exe, exe)
+		if err := os.WriteFile(helper, []byte(script), 0755); err != nil {
+			return err
+		}
+		if err := exec.Command("/bin/bash", helper).Start(); err != nil {
+			return err
+		}
+
 	case "windows":
-		_ = exec.Command("explorer", "/select,", outPath).Run()
+		// Archive = .zip contenant "Go Post Tools.exe" + (optionnel) RTF
+		if err := unzipTo(archivePath, tmp); err != nil {
+			return fmt.Errorf("unzip: %w", err)
+		}
+		newExe := filepath.Join(tmp, "Go Post Tools.exe")
+		helper := filepath.Join(tmp, "install.bat")
+		// timeout + move + relaunch + suppression du bat
+		script := fmt.Sprintf(`@echo off
+timeout /t 2 /nobreak > NUL
+move /Y "%s" "%s"
+start "" "%s"
+del "%%~f0"
+`, newExe, exe, exe)
+		if err := os.WriteFile(helper, []byte(script), 0755); err != nil {
+			return err
+		}
+		cmd := exec.Command("cmd", "/C", "start", "/B", helper)
+		if err := cmd.Start(); err != nil {
+			return err
+		}
+	default:
+		return fmt.Errorf("auto-install non supporté sur %s", runtime.GOOS)
 	}
-	return outPath, nil
+
+	// Quitte l'app après un court délai pour que l'UI puisse afficher le message final
+	go func() {
+		time.Sleep(500 * time.Millisecond)
+		wailsruntime.Quit(a.ctx)
+	}()
+	return nil
+}
+
+// unzipTo extrait un .zip dans un dossier destination.
+func unzipTo(zipPath, dest string) error {
+	r, err := zip.OpenReader(zipPath)
+	if err != nil {
+		return err
+	}
+	defer r.Close()
+	for _, f := range r.File {
+		target := filepath.Join(dest, f.Name)
+		if !strings.HasPrefix(target, filepath.Clean(dest)+string(os.PathSeparator)) {
+			return fmt.Errorf("chemin zip suspect: %s", f.Name)
+		}
+		if f.FileInfo().IsDir() {
+			_ = os.MkdirAll(target, f.Mode())
+			continue
+		}
+		if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
+			return err
+		}
+		rc, err := f.Open()
+		if err != nil {
+			return err
+		}
+		out, err := os.OpenFile(target, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, f.Mode())
+		if err != nil {
+			rc.Close()
+			return err
+		}
+		_, err = io.Copy(out, rc)
+		out.Close()
+		rc.Close()
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// untarGzTo extrait un .tar.gz dans un dossier destination.
+func untarGzTo(tgzPath, dest string) error {
+	f, err := os.Open(tgzPath)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	gz, err := gzip.NewReader(f)
+	if err != nil {
+		return err
+	}
+	defer gz.Close()
+	tr := tar.NewReader(gz)
+	for {
+		h, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return err
+		}
+		target := filepath.Join(dest, h.Name)
+		if !strings.HasPrefix(target, filepath.Clean(dest)+string(os.PathSeparator)) {
+			return fmt.Errorf("chemin tar suspect: %s", h.Name)
+		}
+		switch h.Typeflag {
+		case tar.TypeDir:
+			_ = os.MkdirAll(target, os.FileMode(h.Mode))
+		case tar.TypeReg:
+			if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
+				return err
+			}
+			out, err := os.OpenFile(target, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, os.FileMode(h.Mode))
+			if err != nil {
+				return err
+			}
+			if _, err := io.Copy(out, tr); err != nil {
+				out.Close()
+				return err
+			}
+			out.Close()
+		}
+	}
+	return nil
 }
 
 // StartWatchFolder démarre la surveillance du dossier configuré.
