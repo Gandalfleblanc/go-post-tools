@@ -62,7 +62,9 @@ jobs:
       - name: Ad-hoc codesign
         run: codesign --force --deep --sign - "build/bin/Go Post Tools.app"
       - name: Zip .app (preserve exec bits)
-        run: cd build/bin && zip -r Go-Post-Tools-macos-${{ matrix.arch }}.zip "Go Post Tools.app"
+        run: |
+          cp "docs/Installation et Utilisation GO Post Tools.rtf" build/bin/
+          cd build/bin && zip -r Go-Post-Tools-macos-${{ matrix.arch }}.zip "Go Post Tools.app" "Installation et Utilisation GO Post Tools.rtf"
       - uses: actions/upload-artifact@v4
         with:
           name: Go-Post-Tools-macos-${{ matrix.arch }}
@@ -158,13 +160,16 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
       - name: Package Linux binary
         run: |
-          cd Go-Post-Tools-linux-amd64 && tar -czf "../Go-Post-Tools-linux-amd64.tar.gz" "Go Post Tools" && cd ..
+          cp "docs/Installation et Utilisation GO Post Tools.rtf" Go-Post-Tools-linux-amd64/
+          cd Go-Post-Tools-linux-amd64 && tar -czf "../Go-Post-Tools-linux-amd64.tar.gz" "Go Post Tools" "Installation et Utilisation GO Post Tools.rtf" && cd ..
       - name: Package Windows binary (portable exe)
         run: |
-          cd Go-Post-Tools-windows-amd64 && zip ../Go-Post-Tools-windows-amd64.zip "Go Post Tools.exe" && cd ..
+          cp "docs/Installation et Utilisation GO Post Tools.rtf" Go-Post-Tools-windows-amd64/
+          cd Go-Post-Tools-windows-amd64 && zip ../Go-Post-Tools-windows-amd64.zip "Go Post Tools.exe" "Installation et Utilisation GO Post Tools.rtf" && cd ..
       - name: Rename Windows installer
         run: |
           if [ -f "Go-Post-Tools-windows-amd64/Go Post Tools-amd64-installer.exe" ]; then
