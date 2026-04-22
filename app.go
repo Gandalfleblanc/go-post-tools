@@ -46,7 +46,7 @@ import (
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
-const Version = "3.2.0"
+const Version = "3.2.1"
 
 type App struct {
 	ctx         context.Context
@@ -1544,28 +1544,22 @@ func (a *App) AutoReseedFromHydracker(titleID, saison, episode, preferQuality, p
 	}
 	emit("pick", fmt.Sprintf("Choisi : #%d %s (qual=%d lang=%d %.2f GB)", best.ID, best.Name, best.Quality, best.PrimaryLangID(), float64(best.Size)/1e9))
 
-	// 3. Récupère download_url via /content/torrents/{id}
-	emit("url", "Récupération URL download…")
-	full, err := a.client.GetTorrentByID(best.ID)
-	if err != nil {
-		return nil, fmt.Errorf("get torrent #%d : %w", best.ID, err)
-	}
-	if full == nil || full.DownloadURL == "" {
-		return nil, fmt.Errorf("download_url manquant pour torrent #%d", best.ID)
-	}
-
-	// 4. Télécharge le .torrent dans un fichier temporaire
+	// 3. Télécharge le .torrent via l'endpoint API /api/v1/torrents/{id}/download
+	// (Bearer-authentifié, renvoie du bencode direct).
+	// Ne PAS utiliser le download_url retourné par /content/torrents/{id} : c'est
+	// une URL web signée qui attend une session cookie et renvoie le shell HTML
+	// de l'app frontend si on y accède sans cookie.
 	emit("download", "Téléchargement .torrent…")
-	data, err := a.downloadFile(full.DownloadURL)
+	data, err := a.downloadHydrackerTorrent(best.ID)
 	if err != nil {
-		return nil, fmt.Errorf("download .torrent : %w", err)
+		return nil, fmt.Errorf("download torrent #%d : %w", best.ID, err)
 	}
 	if len(data) < 50 || data[0] != 'd' {
 		preview := string(data)
 		if len(preview) > 200 {
 			preview = preview[:200] + "…"
 		}
-		return nil, fmt.Errorf("fichier reçu n'est pas un .torrent bencode valide (URL=%s, %d bytes, début=%q)", full.DownloadURL, len(data), preview)
+		return nil, fmt.Errorf("fichier reçu n'est pas un .torrent bencode valide (%d bytes, début=%q)", len(data), preview)
 	}
 	tmpFile, err := os.CreateTemp("", fmt.Sprintf("autoreseed-%d-*.torrent", best.ID))
 	if err != nil {
