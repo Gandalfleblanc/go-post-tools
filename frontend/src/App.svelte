@@ -386,6 +386,8 @@
   let mySeedsTotalPages = 1
   let mySeedsFilter = 'all'         // 'all' | '0seed' | 'low' | 'ok'
   let mySeedsActioning = {}         // { [torrentId]: true } pendant auto-reseed
+  let checkActionProg = {}          // { [torrentId]: {stage, percent, speed_mb, msg} }
+  let checkActionActiveID = 0       // ID du torrent en cours d'action (pour router les events)
 
   // Bouton "Parcourir local" : check si un MKV local correspond à une fiche Hydracker
   let localMkvCheck = null          // { filename, parsed, hydrackerFiche, content, error }
@@ -420,32 +422,44 @@
   async function autoReseedFromCheck(t) {
     if (!t?.title_id) return
     mySeedsActioning = { ...mySeedsActioning, [t.id]: true }
-    addLog('SEED', `▶ Auto-reseed torrent #${t.id} (fiche #${t.title_id})`)
+    checkActionActiveID = t.id
+    checkActionProg = { ...checkActionProg, [t.id]: { stage: 'start', percent: 0, speed_mb: 0, msg: 'Upload .torrent…' } }
+    addLog('SEED', `▶ Torrent → seedbox #${t.id} (fiche #${t.title_id})`)
     try {
       const r = await AutoReseedFromHydracker(t.title_id, t.saison || 0, t.episode || 0, 0, 0)
+      checkActionProg = { ...checkActionProg, [t.id]: { stage: 'done', percent: 100, speed_mb: 0, msg: 'Terminé — recheck OK' } }
       addLog('SEED', `✓ Reseed OK → ${r.torrent_name}`)
       try { Notify('✓ Reseed OK', t.torrent_name || t.name) } catch(e) {}
       setTimeout(loadMySeeds, 1500)
     } catch(e) {
+      checkActionProg = { ...checkActionProg, [t.id]: { stage: 'error', percent: 0, speed_mb: 0, msg: String(e) } }
       addLog('SEED', `✗ Reseed #${t.id} : ${e}`)
     }
     mySeedsActioning = { ...mySeedsActioning, [t.id]: false }
+    checkActionActiveID = 0
+    setTimeout(() => { const { [t.id]: _, ...rest } = checkActionProg; checkActionProg = rest }, 4000)
   }
 
   // Reseed complet : DDL 1fichier → FTP (nom exact torrent) + .torrent seedbox + recheck
   async function fullReseedFromCheck(t) {
     if (!t?.title_id || !t?.id) return
     mySeedsActioning = { ...mySeedsActioning, [t.id]: true }
+    checkActionActiveID = t.id
+    checkActionProg = { ...checkActionProg, [t.id]: { stage: 'start', percent: 0, speed_mb: 0, msg: 'DDL 1fichier…' } }
     addLog('SEED', `▶ Reseed complet torrent #${t.id} (DDL→FTP+seedbox+recheck)`)
     try {
       const r = await AutoReseedFullFromTorrent(t.id, t.title_id, t.saison || 0, t.episode || 0)
+      checkActionProg = { ...checkActionProg, [t.id]: { stage: 'done', percent: 100, speed_mb: 0, msg: `Terminé — ${r.rechecked ? 'recheck OK' : 'sans recheck'}` } }
       addLog('SEED', `✓ ${r.expected_filename} → FTP OK · seedbox ${r.seedbox_path}${r.rechecked ? ' · recheck OK' : ''}`)
       try { Notify('✓ Reseed complet OK', r.expected_filename) } catch(e) {}
       setTimeout(loadMySeeds, 1500)
     } catch(e) {
+      checkActionProg = { ...checkActionProg, [t.id]: { stage: 'error', percent: 0, speed_mb: 0, msg: String(e) } }
       addLog('SEED', `✗ Reseed complet #${t.id} : ${e}`)
     }
     mySeedsActioning = { ...mySeedsActioning, [t.id]: false }
+    checkActionActiveID = 0
+    setTimeout(() => { const { [t.id]: _, ...rest } = checkActionProg; checkActionProg = rest }, 4000)
   }
 
   async function checkLocalMkv() {
@@ -868,6 +882,23 @@
     EventsOn('autoreseed:status', p => {
       autoReseedStatus = p.msg || p.stage || ''
       if (p.msg) addLog('AUTO', p.msg)
+      // Route l'état vers le torrent actif de l'onglet Check Torrent
+      if (checkActionActiveID) {
+        checkActionProg = { ...checkActionProg, [checkActionActiveID]: {
+          ...(checkActionProg[checkActionActiveID] || {}),
+          stage: p.stage || 'progress',
+          msg: p.msg || '',
+        } }
+      }
+    })
+    EventsOn('autoreseed:progress', p => {
+      if (checkActionActiveID) {
+        checkActionProg = { ...checkActionProg, [checkActionActiveID]: {
+          ...(checkActionProg[checkActionActiveID] || { stage: 'progress', msg: '' }),
+          percent: p.percent || 0,
+          speed_mb: p.speed_mb || 0,
+        } }
+      }
     })
     EventsOn('autoreseed_ddl:status', p => {
       autoReseedStatus = p.msg || p.stage || ''
@@ -887,28 +918,54 @@
     // Events du workflow complet (DDL→FTP+torrent+recheck) — on les route vers
     // la demande active (reqActiveID) pour afficher barre + vitesse dans le UI.
     EventsOn('autoreseed_full:status', p => {
-      if (!reqActiveID) return
-      reqProgress = { ...reqProgress, [reqActiveID]: { ...(reqProgress[reqActiveID] || {}), stage: p.stage || '', msg: p.msg || '' } }
+      if (reqActiveID) {
+        reqProgress = { ...reqProgress, [reqActiveID]: { ...(reqProgress[reqActiveID] || {}), stage: p.stage || '', msg: p.msg || '' } }
+      }
+      if (checkActionActiveID) {
+        checkActionProg = { ...checkActionProg, [checkActionActiveID]: {
+          ...(checkActionProg[checkActionActiveID] || {}),
+          stage: p.stage || 'progress',
+          msg: p.msg || '',
+        } }
+      }
       if (p.msg) addLog('AUTO', p.msg)
     })
     EventsOn('autoreseed_full:progress', p => {
-      if (!reqActiveID) return
-      reqProgress = { ...reqProgress, [reqActiveID]: {
-        ...(reqProgress[reqActiveID] || {}),
-        stage: 'ftp',
-        percent: p.percent || 0,
-        speed_mb: p.speed_mb || 0,
-        bytes: p.bytes || 0,
-        total: p.total || 0,
-      } }
+      if (reqActiveID) {
+        reqProgress = { ...reqProgress, [reqActiveID]: {
+          ...(reqProgress[reqActiveID] || {}),
+          stage: 'ftp',
+          percent: p.percent || 0,
+          speed_mb: p.speed_mb || 0,
+          bytes: p.bytes || 0,
+          total: p.total || 0,
+        } }
+      }
+      if (checkActionActiveID) {
+        checkActionProg = { ...checkActionProg, [checkActionActiveID]: {
+          ...(checkActionProg[checkActionActiveID] || { stage: 'ftp', msg: '' }),
+          percent: p.percent || 0,
+          speed_mb: p.speed_mb || 0,
+        } }
+      }
     })
     EventsOn('autoreseed_full:seedbox', p => {
-      if (!reqActiveID) return
-      reqProgress = { ...reqProgress, [reqActiveID]: {
-        ...(reqProgress[reqActiveID] || {}),
-        stage: 'seedbox',
-        msg: `Seedbox : ${(p.percent || 0).toFixed(0)}%`,
-      } }
+      if (reqActiveID) {
+        reqProgress = { ...reqProgress, [reqActiveID]: {
+          ...(reqProgress[reqActiveID] || {}),
+          stage: 'seedbox',
+          msg: `Seedbox : ${(p.percent || 0).toFixed(0)}%`,
+        } }
+      }
+      if (checkActionActiveID) {
+        checkActionProg = { ...checkActionProg, [checkActionActiveID]: {
+          ...(checkActionProg[checkActionActiveID] || {}),
+          stage: 'seedbox',
+          percent: p.percent || 0,
+          speed_mb: p.speed_mb || 0,
+          msg: `Seedbox : ${(p.percent || 0).toFixed(0)}%`,
+        } }
+      }
     })
     EventsOn('reseed:progress', p => {
       reseedPct = p.percent ?? 0
@@ -1816,6 +1873,19 @@
                   <button class="btn-test" on:click={() => OpenBrowser(`https://hydracker.com/titles/${t.title_id}`)}>🌐 Fiche</button>
                 </div>
               </div>
+              {#if checkActionProg[t.id]}
+                {@const prog = checkActionProg[t.id]}
+                <div class="check-prog" class:done={prog.stage === 'done'} class:err={prog.stage === 'error'}>
+                  <div class="check-prog-bar"><div class="check-prog-fill" style="width:{prog.percent || 0}%"></div></div>
+                  <div class="check-prog-meta">
+                    <span class="check-prog-msg">{prog.msg || prog.stage || '…'}</span>
+                    <span class="check-prog-stats">
+                      {(prog.percent || 0).toFixed(0)}%
+                      {#if prog.speed_mb > 0} · ⚡ {prog.speed_mb.toFixed(1)} MB/s{/if}
+                    </span>
+                  </div>
+                </div>
+              {/if}
             {/each}
           {/if}
         </div>
@@ -3059,6 +3129,23 @@
   .chk-btn { margin-top: 4px; padding: 9px 18px; font-size: 13px; }
   .chk-progress { display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--text2); }
   .chk-progress .progress-bar { flex: 1; height: 7px; background: rgba(255,255,255,0.06); border-radius: 4px; overflow: hidden; }
+
+  /* Barre de progression inline pour les actions Torrent→seedbox et Reseed complet */
+  .check-prog {
+    margin-top: -4px; margin-bottom: 12px; padding: 8px 12px;
+    background: rgba(108, 99, 255, 0.08); border: 1px solid rgba(108, 99, 255, 0.2);
+    border-left: 3px solid #6c63ff; border-radius: 0 6px 6px 0;
+    font-size: 11px;
+  }
+  .check-prog.done { background: rgba(126, 240, 192, 0.08); border-color: rgba(126, 240, 192, 0.35); border-left-color: #7ef0c0; }
+  .check-prog.err  { background: rgba(239, 68, 68, 0.08); border-color: rgba(239, 68, 68, 0.35); border-left-color: #ef4444; }
+  .check-prog-bar  { height: 6px; background: rgba(255,255,255,0.06); border-radius: 3px; overflow: hidden; margin-bottom: 4px; }
+  .check-prog-fill { height: 100%; background: linear-gradient(90deg, #6c63ff, #a78bfa); transition: width 0.25s; }
+  .check-prog.done .check-prog-fill { background: linear-gradient(90deg, #22c55e, #7ef0c0); }
+  .check-prog.err  .check-prog-fill { background: #ef4444; }
+  .check-prog-meta { display: flex; justify-content: space-between; gap: 10px; align-items: center; color: var(--text2); }
+  .check-prog-msg  { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .check-prog-stats { font-family: ui-monospace, monospace; font-variant-numeric: tabular-nums; color: var(--text); font-size: 10.5px; white-space: nowrap; }
   .chk-progress .progress-fill { height: 100%; background: var(--grad-primary); transition: width 0.15s; }
   .chk-pct { width: 40px; text-align: right; font-variant-numeric: tabular-nums; }
   .chk-status { min-width: 180px; }

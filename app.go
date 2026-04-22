@@ -2117,7 +2117,21 @@ func (a *App) PostTorrentWorkflow(titleID, qualite int, langues, subs []string, 
 	if err != nil {
 		return nil, fmt.Errorf("seedbox: %w", err)
 	}
-	emit("done", fmt.Sprintf("Seedbox OK : %s", seedPath))
+	emit("seedbox_done", fmt.Sprintf("Seedbox OK : %s", seedPath))
+
+	// Force re-check : le torrent vient d'être ajouté, on force rtorrent à
+	// vérifier le hash du MKV déjà sur la seedbox (évite un téléchargement inutile).
+	if mi, err := metainfo.LoadFromFile(sourceForSeedbox); err == nil {
+		hash := mi.HashInfoBytes().HexString()
+		emit("recheck", "Force re-check ruTorrent…")
+		time.Sleep(2 * time.Second)
+		if err := rutorrent.Recheck(a.cfg.SeedboxURL, a.cfg.SeedboxUser, a.cfg.SeedboxPassword, hash); err != nil {
+			emit("recheck_warn", "recheck échoué : "+err.Error())
+		} else {
+			emit("recheck_done", "Re-check OK")
+		}
+	}
+	emit("done", fmt.Sprintf("Terminé : %s", seedPath))
 
 	a.recordHistory(history.Entry{
 		Type:        "torrent",

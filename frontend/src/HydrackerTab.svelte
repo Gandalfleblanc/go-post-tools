@@ -502,8 +502,11 @@
       // 1080p.HDLight + H265 → HDLight 1080p x265 systématique
       qualID = findQual('hdlight', '1080p', 'x265') || findQual('hdlight', 'x265') || 50
     } else if (/\bweb([-.]?(?:rip|dl))?\b/.test(name) || name.includes('.web.')) {
-      if (isH265) qualID = findQual('web', 'x265') || findQual('webrip', 'x265')
-      if (!qualID) qualID = (bitrate > 0 && bitrate <= 3000) ? 94 : 4 // WEB 1080p Light sinon WEB
+      // WEB 1080p prioritaire si résolution présente (films ET séries)
+      const is1080p = /\b1080p\b/i.test(file.name)
+      if (isH265) qualID = findQual('web', '1080p', 'x265') || findQual('webrip', '1080p', 'x265') || findQual('web', 'x265') || findQual('webrip', 'x265')
+      if (!qualID && is1080p) qualID = findQual('web', '1080p') || findQual('webrip', '1080p')
+      if (!qualID) qualID = (bitrate > 0 && bitrate <= 3000) ? 94 : 4 // Fallback : WEB 1080p Light sinon WEB
     } else if (/\bblu-?ray\b/.test(name)) {
       if (isH265) qualID = findQual('bluray', 'x265')
       if (!qualID && bitrate > 0 && bitrate <= 3000) qualID = 50 // HDLight 1080p
@@ -530,12 +533,30 @@
     const audioTracks = (mediaInfo?.audios || []).map(a => a.lang).filter(Boolean)
     if (audioTracks.length) {
       postLanguages = dedupeById(mapAudioTracks(audioTracks))
-      langsAutoFilled = true
     } else if (fileInfo?.languages?.length) {
       // Fallback sur le parser, sans les tags génériques
       const clean = fileInfo.languages.filter(l => !['multi','multil','dual','vff'].includes(l.toLowerCase()))
-      if (clean.length) { postLanguages = dedupeById(clean.map(matchLang)); langsAutoFilled = true }
+      if (clean.length) postLanguages = dedupeById(clean.map(matchLang))
     }
+    // Patterns spéciaux dans le nom de fichier (priorité filename sur mediainfo)
+    const rawName = (fileInfo?.raw || file?.name || '').toUpperCase()
+    // WITH.AD → ajouter FRENCH AD aux langues
+    if (rawName.includes('WITH.AD') || rawName.includes('WITHAD')) {
+      const frad = langOptions.find(o => o.name === 'FRENCH AD')
+      if (frad && !postLanguages.some(l => l && l.name === 'FRENCH AD')) {
+        postLanguages = dedupeById([...postLanguages, frad])
+        addLog('LANG', 'WITH.AD détecté → ajout FRENCH AD')
+      }
+    }
+    // French.VOQ → ajouter French (Canada)
+    if (rawName.includes('VOQ')) {
+      const frcan = langOptions.find(o => o.name === 'French (Canada)')
+      if (frcan && !postLanguages.some(l => l && l.name === 'French (Canada)')) {
+        postLanguages = dedupeById([...postLanguages, frcan])
+        addLog('LANG', 'VOQ détecté → ajout French (Canada)')
+      }
+    }
+    if (postLanguages.length) langsAutoFilled = true
   }
 
   $: if (langOptions.length && subOptions.length && !subsAutoFilled && mediaInfo?.subs?.length) {
@@ -678,7 +699,13 @@
         lang: a.Language || null,
       })),
       langs: [...new Set(audios.map(a => a.Language).filter(Boolean))],
-      subs: texts.map(t => t.Language || t.Title).filter(Boolean),
+      // On filtre les sous-titres forcés : quand le MKV n'a QUE des subs forcés
+      // (typiquement traduction de dialogues étrangers), on ne les remonte pas
+      // sur Darkiworld — l'utilisateur ne les veut pas dans la fiche.
+      subs: texts
+        .filter(t => String(t.Forced || '').toLowerCase() !== 'yes')
+        .map(t => t.Language || t.Title)
+        .filter(Boolean),
     }
   }
 
@@ -1065,21 +1092,14 @@
   async function deselectHydracker() {
     selectedHydracker = null
     hydrackerPosterUrl = ''
-    hydrackerNotFound = false
-    if (hydrackerSearchCache.length) {
-      hydrackerResults = [...hydrackerSearchCache]
-    } else if (selectedTMDB) {
-      const title = selectedTMDB.title || selectedTMDB.name
-      if (title) {
-        try {
-          hydrackerSearchLoading = true
-          hydrackerResults = await HydrackerSearch(title) || []
-          hydrackerSearchCache = [...hydrackerResults]
-        } catch(e) { console.error(e) }
-        hydrackerSearchLoading = false
-      }
-      if (!hydrackerResults.length) hydrackerNotFound = true
-    }
+    hydrackerResults = []
+    // Désélection manuelle = l'utilisateur veut créer/rechercher une autre fiche.
+    // On affiche direct le popup de création (avec ID TMDB + "Ouvrir Admin" + input
+    // pour coller l'ID Hydracker). Le champ "Rechercher sur Hydracker" reste
+    // dispo en dessous si besoin.
+    hydrackerNotFound = Boolean(selectedTMDB)
+    hydrackerManualId = ''
+    hydrackerManualError = ''
   }
 
   function addLang(opt) {
