@@ -30,6 +30,18 @@ export function DeleteLien(arg1) {
   return window['go']['main']['App']['DeleteLien'](arg1);
 }
 
+export function DeleteMyLien(arg1) {
+  return window['go']['main']['App']['DeleteMyLien'](arg1);
+}
+
+export function DeleteMyNzb(arg1) {
+  return window['go']['main']['App']['DeleteMyNzb'](arg1);
+}
+
+export function DeleteMyTorrent(arg1) {
+  return window['go']['main']['App']['DeleteMyTorrent'](arg1);
+}
+
 export function DeleteNzb(arg1) {
   return window['go']['main']['App']['DeleteNzb'](arg1);
 }
@@ -132,6 +144,14 @@ export function IsWatching() {
 
 export function ListCheckTorrents(arg1) {
   return window['go']['main']['App']['ListCheckTorrents'](arg1);
+}
+
+export function ListMyLiens(arg1, arg2) {
+  return window['go']['main']['App']['ListMyLiens'](arg1, arg2);
+}
+
+export function ListMyTorrents(arg1, arg2) {
+  return window['go']['main']['App']['ListMyTorrents'](arg1, arg2);
 }
 
 export function ListReseedRequests(arg1, arg2, arg3, arg4) {
@@ -280,6 +300,14 @@ export function TestTMDB(arg1) {
 
 export function TestUsenet(arg1, arg2) {
   return window['go']['main']['App']['TestUsenet'](arg1, arg2);
+}
+
+export function UpdateMyLien(arg1, arg2, arg3, arg4, arg5, arg6) {
+  return window['go']['main']['App']['UpdateMyLien'](arg1, arg2, arg3, arg4, arg5, arg6);
+}
+
+export function UpdateMyTorrent(arg1, arg2, arg3, arg4, arg5, arg6) {
+  return window['go']['main']['App']['UpdateMyTorrent'](arg1, arg2, arg3, arg4, arg5, arg6);
 }
 
 export function VerifyLihdlSettingsPassword(arg1) {

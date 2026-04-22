@@ -5,13 +5,14 @@
   import HydrackerTab from './HydrackerTab.svelte'
   import { logEntries, addLog, clearLogs } from './logs.js'
   import logo from './assets/logo.png'
-  import { ListCheckTorrents, ReseedFromLihdl, ReseedPrepare, ReseedExecute, SelectAnyTorrentFile, SelectMkvFile, GetVersion, StartWatchFolder, StopWatchFolder, IsWatching, CheckForUpdate, OpenBrowser, HistoryList, HistoryDelete, HistoryStats, DownloadUpdate, HasLihdlSettingsPassword, SetLihdlSettingsPassword, VerifyLihdlSettingsPassword, ClearLihdlSettingsPassword, IsLihdlPasswordManaged, IsHydrackerURLManaged, GetEffectiveHydrackerURL, FindHydrackerSources, FicheGetContent, HydrackerSearch, HydrackerGetByID, HydrackerGetByTmdbID, DownloadToDownloads, AutoReseedFromHydracker, AutoReseedDDLFromHydracker, ListReseedRequests, Notify } from '../wailsjs/go/main/App.js'
+  import { ListCheckTorrents, ReseedFromLihdl, ReseedPrepare, ReseedExecute, SelectAnyTorrentFile, SelectMkvFile, GetVersion, StartWatchFolder, StopWatchFolder, IsWatching, CheckForUpdate, OpenBrowser, HistoryList, HistoryDelete, HistoryStats, DownloadUpdate, HasLihdlSettingsPassword, SetLihdlSettingsPassword, VerifyLihdlSettingsPassword, ClearLihdlSettingsPassword, IsLihdlPasswordManaged, IsHydrackerURLManaged, GetEffectiveHydrackerURL, FindHydrackerSources, FicheGetContent, HydrackerSearch, HydrackerGetByID, HydrackerGetByTmdbID, DownloadToDownloads, AutoReseedFromHydracker, AutoReseedDDLFromHydracker, ListReseedRequests, ListMyLiens, ListMyTorrents, DeleteMyLien, DeleteMyTorrent, DeleteMyNzb, UpdateMyLien, UpdateMyTorrent, GetMetaQualities, Notify } from '../wailsjs/go/main/App.js'
 
   // --- Tabs ---
   const TABS = [
     { id: 'hydracker', label: '🎬 Hydracker' },
     { id: 'fiches',    label: '🎞 Fiches' },
     { id: 'requests',  label: '📋 Demandes' },
+    { id: 'myuploads', label: '📤 Mes uploads' },
     { id: 'history',   label: '📚 Historique' },
     { id: 'check',     label: '🔍 Check Torrent' },
     { id: 'reseed',    label: '♻️ Reseed' },
@@ -450,6 +451,106 @@
     addLog('REQ', '✓ Batch terminé')
   }
 
+// --- Mes uploads (admin CRUD sur tes propres items) ---
+  let myUsername = 'Gandalf'              // TODO: fetch depuis /user-profile/me
+  let myTab = 'torrents'                   // 'torrents' | 'liens'
+  let myItems = []                         // []Lien ou []TorrentItem
+  let myLoading = false
+  let myError = ''
+  let myPage = 1
+  let myTotalPages = 1
+  let editingItem = null                   // item en cours d'édition (modal)
+  let editPayload = { quality: 0, lang: 0, saison: 0, episode: 0, active: -1 }
+  let deletingItem = null                  // item dont on demande confirmation delete
+  let deleteConfirmInput = ''              // texte tapé par user pour confirmer
+  let qualityOptions = []
+
+  async function loadMyUploads() {
+    myLoading = true
+    myError = ''
+    myItems = []
+    try {
+      if (myTab === 'torrents') {
+        const r = await ListMyTorrents(myUsername, myPage)
+        myItems = r?.pagination?.data || []
+        myTotalPages = r?.pagination?.last_page || 1
+      } else if (myTab === 'liens') {
+        const r = await ListMyLiens(myUsername, myPage)
+        myItems = r?.pagination?.data || []
+        myTotalPages = r?.pagination?.last_page || 1
+      }
+    } catch(e) {
+      myError = String(e?.message || e)
+      addLog('MY', '✗ ' + myError)
+    }
+    myLoading = false
+  }
+
+  $: if (activeTab === 'myuploads') { loadMyUploads(); if (!qualityOptions.length) GetMetaQualities().then(q => qualityOptions = q || []).catch(() => {}) }
+  $: if (myTab) { myPage = 1 }
+
+  function startEdit(item) {
+    editingItem = item
+    editPayload = {
+      quality: item.qualite || item.quality || 0,
+      lang: item.lang_id || item.lang || (item.langues_compact?.[0]?.id) || 0,
+      saison: item.saison || item.season || 0,
+      episode: item.episode || 0,
+      active: item.active === 0 ? 0 : (item.active === 1 ? 1 : -1),
+    }
+  }
+  function cancelEdit() { editingItem = null }
+
+  async function saveEdit() {
+    if (!editingItem) return
+    const id = editingItem.id
+    try {
+      if (myTab === 'torrents') {
+        await UpdateMyTorrent(id, editPayload.quality, editPayload.lang, editPayload.saison, editPayload.episode, editPayload.active)
+      } else {
+        await UpdateMyLien(id, editPayload.quality, editPayload.lang, editPayload.saison, editPayload.episode, editPayload.active)
+      }
+      addLog('MY', `✓ Modifié ${myTab.slice(0,-1)} #${id}`)
+      try { Notify('✓ Modifié', `${myTab.slice(0,-1)} #${id}`) } catch(e) {}
+      editingItem = null
+      loadMyUploads()
+    } catch(e) {
+      addLog('MY', `✗ ${e}`)
+    }
+  }
+
+  function startDelete(item) {
+    deletingItem = item
+    deleteConfirmInput = ''
+  }
+  function cancelDelete() { deletingItem = null; deleteConfirmInput = '' }
+
+  async function confirmDelete() {
+    if (!deletingItem) return
+    // Vérif : l'user doit avoir tapé l'ID exact pour confirmer
+    if (deleteConfirmInput.trim() !== String(deletingItem.id)) {
+      addLog('MY', '⚠ Suppression annulée : ID ne correspond pas')
+      return
+    }
+    const id = deletingItem.id
+    try {
+      if (myTab === 'torrents') {
+        await DeleteMyTorrent(id)
+      } else if (myTab === 'liens') {
+        await DeleteMyLien(id)
+      }
+      addLog('MY', `✓ Supprimé ${myTab.slice(0,-1)} #${id}`)
+      try { Notify('🗑 Supprimé', `${myTab.slice(0,-1)} #${id}`) } catch(e) {}
+      deletingItem = null
+      deleteConfirmInput = ''
+      loadMyUploads()
+    } catch(e) {
+      addLog('MY', `✗ ${e}`)
+    }
+  }
+
+  function qualityName(id) { return qualityOptions.find(q => q.id === id)?.name || ('qual#' + id) }
+
 // Check Torrent
   let checkTorrents = []
   let checkLoading = false
@@ -836,6 +937,138 @@
             {/each}
           {/if}
         </div>
+      </div>
+
+    <!-- ===== MES UPLOADS ===== -->
+    {:else if activeTab === 'myuploads'}
+      <div class="tab-content">
+        <h2>📤 Mes uploads</h2>
+        <div class="section">
+          <div class="section-header">
+            <span>Type</span>
+            <span style="color:var(--text3);font-size:11px">user: <b>{myUsername}</b></span>
+          </div>
+          <div class="field" style="display:flex;gap:6px;flex-wrap:wrap">
+            <button class="btn-test" class:active-chip={myTab === 'torrents'} on:click={() => { myTab = 'torrents'; myPage = 1; loadMyUploads() }}>📦 Torrents</button>
+            <button class="btn-test" class:active-chip={myTab === 'liens'} on:click={() => { myTab = 'liens'; myPage = 1; loadMyUploads() }}>🔗 DDL</button>
+            <button class="btn-test" on:click={loadMyUploads} disabled={myLoading}>🔄 Rafraîchir</button>
+          </div>
+        </div>
+
+        <div class="section">
+          <div class="section-header">
+            <span>Items ({myItems.length})</span>
+            {#if myTotalPages > 1}
+              <span style="color:var(--text3);font-size:11px">
+                Page {myPage}/{myTotalPages}
+                <button class="btn-test" style="margin-left:6px" on:click={() => { if (myPage > 1) { myPage--; loadMyUploads() } }} disabled={myPage <= 1}>‹</button>
+                <button class="btn-test" on:click={() => { if (myPage < myTotalPages) { myPage++; loadMyUploads() } }} disabled={myPage >= myTotalPages}>›</button>
+              </span>
+            {/if}
+          </div>
+          {#if myLoading && myItems.length === 0}
+            <div style="color:var(--text3);font-size:12px">Chargement…</div>
+          {:else if myError}
+            <div style="color:#ff9585;font-size:12px">⚠ {myError}</div>
+          {:else if myItems.length === 0}
+            <div style="color:var(--text3);font-size:12px">Aucun item.</div>
+          {:else}
+            {#each myItems as item}
+              <div class="my-item">
+                <div style="flex:1;min-width:0">
+                  <div style="font-weight:600;font-size:12px;color:var(--text);margin-bottom:3px">
+                    #{item.id}
+                    · {item.name || item.torrent_name || (myTab === 'liens' ? item.lien : '(sans nom)')}
+                  </div>
+                  <div style="display:flex;gap:10px;flex-wrap:wrap;font-size:11px;color:var(--text3)">
+                    <span>fiche #{item.title_id}</span>
+                    {#if item.qualite || item.quality}<span>qual: {qualityName(item.qualite || item.quality)}</span>{/if}
+                    {#if item.saison || item.episode}<span>S{String(item.saison||0).padStart(2,'0')}E{String(item.episode||0).padStart(2,'0')}</span>{/if}
+                    {#if item.taille || item.size}<span>{((item.taille||item.size)/1e9).toFixed(2)} GB</span>{/if}
+                    {#if item.host?.name}<span>host: {item.host.name}</span>{/if}
+                    {#if item.active === 0}<span style="color:#ff9585">⚠ inactif</span>{/if}
+                    <span>📅 {(item.created_at || '').slice(0,10)}</span>
+                  </div>
+                </div>
+                <div style="display:flex;flex-direction:column;gap:4px;align-self:center">
+                  <button class="btn-test" on:click={() => startEdit(item)} title="Modifier">✏ Modifier</button>
+                  <button class="btn-test" style="color:#ff6b6b;border-color:rgba(255,107,107,0.35)" on:click={() => startDelete(item)} title="Supprimer">🗑 Supprimer</button>
+                </div>
+              </div>
+            {/each}
+          {/if}
+        </div>
+
+        <!-- Modal Édition -->
+        {#if editingItem}
+          <div class="modal-backdrop" on:click|self={cancelEdit}>
+            <div class="modal-card">
+              <div class="modal-title">✏ Modifier #{editingItem.id}</div>
+              <div class="modal-hint">Laisse à 0 les champs que tu ne veux pas changer.</div>
+              <div class="field">
+                <label>Qualité (ID)</label>
+                <select bind:value={editPayload.quality}>
+                  <option value={0}>— Inchangé —</option>
+                  {#each qualityOptions as q}
+                    <option value={q.id}>{q.name} (#{q.id})</option>
+                  {/each}
+                </select>
+              </div>
+              <div class="field" style="display:flex;gap:10px">
+                <div style="flex:1">
+                  <label>Saison</label>
+                  <input type="number" min="0" bind:value={editPayload.saison} />
+                </div>
+                <div style="flex:1">
+                  <label>Épisode</label>
+                  <input type="number" min="0" bind:value={editPayload.episode} />
+                </div>
+              </div>
+              <div class="field">
+                <label>Langue (ID)</label>
+                <input type="number" min="0" bind:value={editPayload.lang} placeholder="0 = inchangé · ex: 8 = TrueFrench" />
+              </div>
+              <div class="field">
+                <label>État</label>
+                <div style="display:flex;gap:6px">
+                  <button class="btn-test" class:active-chip={editPayload.active === -1} on:click={() => editPayload.active = -1}>Inchangé</button>
+                  <button class="btn-test" class:active-chip={editPayload.active === 1} on:click={() => editPayload.active = 1}>✓ Actif</button>
+                  <button class="btn-test" class:active-chip={editPayload.active === 0} on:click={() => editPayload.active = 0}>⚠ Inactif</button>
+                </div>
+              </div>
+              <div class="post-actions">
+                <button class="btn-save" on:click={saveEdit}>💾 Enregistrer</button>
+                <button class="btn-test" on:click={cancelEdit}>Annuler</button>
+              </div>
+            </div>
+          </div>
+        {/if}
+
+        <!-- Modal Delete -->
+        {#if deletingItem}
+          <div class="modal-backdrop" on:click|self={cancelDelete}>
+            <div class="modal-card" style="border-color:rgba(255,107,107,0.55)">
+              <div class="modal-title" style="color:#ff6b6b">🗑 Suppression définitive</div>
+              <div class="modal-hint">
+                Tu es sur le point de supprimer <b>définitivement</b> cet item :
+              </div>
+              <div style="background:rgba(0,0,0,0.25);padding:10px;border-radius:8px;margin:10px 0;font-size:12px">
+                <div><b>#{deletingItem.id}</b> · {deletingItem.name || deletingItem.torrent_name || deletingItem.lien || ''}</div>
+                <div style="color:var(--text3);font-size:11px;margin-top:3px">fiche #{deletingItem.title_id}{deletingItem.saison || deletingItem.episode ? ` · S${String(deletingItem.saison||0).padStart(2,'0')}E${String(deletingItem.episode||0).padStart(2,'0')}` : ''}</div>
+              </div>
+              <div class="field">
+                <label>Tape l'ID <b>{deletingItem.id}</b> pour confirmer :</label>
+                <input type="text" bind:value={deleteConfirmInput} placeholder={deletingItem.id} />
+              </div>
+              <div class="post-actions">
+                <button class="btn-save" style="background:#ff6b6b;border-color:#ff6b6b" on:click={confirmDelete} disabled={deleteConfirmInput.trim() !== String(deletingItem.id)}>
+                  🗑 Supprimer définitivement
+                </button>
+                <button class="btn-test" on:click={cancelDelete}>Annuler</button>
+              </div>
+            </div>
+          </div>
+        {/if}
       </div>
 
     <!-- ===== HISTORIQUE ===== -->
@@ -1897,6 +2130,37 @@
   .req-status-pending { background: rgba(255, 214, 10, 0.15); color: var(--yellow); border: 1px solid rgba(255, 214, 10, 0.35); }
   .req-status-done    { background: rgba(126, 240, 192, 0.12); color: #7ef0c0; border: 1px solid rgba(126, 240, 192, 0.35); }
   .req-status-rejected{ background: rgba(255, 107, 107, 0.12); color: #ff6b6b; border: 1px solid rgba(255, 107, 107, 0.35); }
+
+  .my-item {
+    background: rgba(255,255,255,0.03);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 12px;
+    margin-bottom: 6px;
+    display: flex;
+    gap: 12px;
+    align-items: center;
+  }
+
+  .modal-backdrop {
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,0.6);
+    backdrop-filter: blur(4px);
+    display: flex; align-items: center; justify-content: center;
+    z-index: 1000;
+  }
+  .modal-card {
+    background: var(--paper, #1e1e24);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px 24px;
+    max-width: 480px;
+    width: 90%;
+    max-height: 85vh;
+    overflow-y: auto;
+  }
+  .modal-title { font-size: 15px; font-weight: 600; color: var(--text); margin-bottom: 4px; }
+  .modal-hint { color: var(--text3); font-size: 12px; margin-bottom: 12px; }
 
   .test-result {
     font-size: 12px; padding: 7px 11px; border-radius: 8px; margin-bottom: 12px;

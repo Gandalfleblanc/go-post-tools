@@ -46,7 +46,7 @@ import (
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
-const Version = "2.0.0"
+const Version = "2.1.0"
 
 type App struct {
 	ctx         context.Context
@@ -1298,6 +1298,72 @@ func (a *App) FindHydrackerSources(titleID, saison, episode int) (*FindHydracker
 		logEv("torrents raw: " + raw)
 	}
 	return res, nil
+}
+
+// --- Admin : Mes uploads (list + delete + update) ---
+
+// ListMyLiens retourne les DDL du user courant (via /admin/liens filtré).
+func (a *App) ListMyLiens(username string, page int) (*api.AdminLiensResponse, error) {
+	a.resetCancellation()
+	return a.client.ListAdminLiens(username, page)
+}
+
+// ListMyTorrents retourne les torrents du user courant.
+func (a *App) ListMyTorrents(username string, page int) (*api.AdminTorrentsResponse, error) {
+	a.resetCancellation()
+	return a.client.ListAdminTorrents(username, page)
+}
+
+// DeleteMyLien — DELETE sur /liens/{id}.
+func (a *App) DeleteMyLien(id int) error {
+	a.resetCancellation()
+	return a.client.DeleteLien(id)
+}
+
+// DeleteMyTorrent — DELETE sur /torrents/{id}.
+func (a *App) DeleteMyTorrent(id int) error {
+	a.resetCancellation()
+	return a.client.DeleteTorrent(id)
+}
+
+// DeleteMyNzb — DELETE sur /nzb/{id}.
+func (a *App) DeleteMyNzb(id int) error {
+	a.resetCancellation()
+	return a.client.DeleteNzb(id)
+}
+
+// UpdateMyLien — PUT sur /liens/{id} avec les champs modifiables.
+// Passer 0 pour laisser un champ inchangé (omitempty côté JSON).
+// activeValue : -1 = ne pas toucher, 0 = désactiver, 1 = activer
+func (a *App) UpdateMyLien(id, quality, lang, saison, episode, activeValue int) error {
+	a.resetCancellation()
+	p := api.UpdateLienPayload{
+		Quality: quality,
+		Lang:    lang,
+		Season:  saison,
+		Episode: episode,
+	}
+	if activeValue >= 0 {
+		v := activeValue
+		p.Active = &v
+	}
+	return a.client.UpdateLien(id, p)
+}
+
+// UpdateMyTorrent — PUT sur /torrents/{id}.
+func (a *App) UpdateMyTorrent(id, quality, lang, saison, episode, activeValue int) error {
+	a.resetCancellation()
+	p := api.UpdateTorrentPayload{
+		Quality: quality,
+		Lang:    lang,
+		Season:  saison,
+		Episode: episode,
+	}
+	if activeValue >= 0 {
+		v := activeValue
+		p.Active = &v
+	}
+	return a.client.UpdateTorrent(id, p)
 }
 
 // ListReseedRequests expose l'endpoint admin /reseed-requests au frontend.

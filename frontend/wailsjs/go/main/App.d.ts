@@ -23,6 +23,12 @@ export function ClearLihdlSettingsPassword(arg1:string):Promise<void>;
 
 export function DeleteLien(arg1:number):Promise<void>;
 
+export function DeleteMyLien(arg1:number):Promise<void>;
+
+export function DeleteMyNzb(arg1:number):Promise<void>;
+
+export function DeleteMyTorrent(arg1:number):Promise<void>;
+
 export function DeleteNzb(arg1:number):Promise<void>;
 
 export function DeleteTorrent(arg1:number):Promise<void>;
@@ -74,6 +80,10 @@ export function IsLihdlPasswordManaged():Promise<boolean>;
 export function IsWatching():Promise<boolean>;
 
 export function ListCheckTorrents(arg1:boolean):Promise<Array<main.CheckTorrentEntry>>;
+
+export function ListMyLiens(arg1:string,arg2:number):Promise<api.AdminLiensResponse>;
+
+export function ListMyTorrents(arg1:string,arg2:number):Promise<api.AdminTorrentsResponse>;
 
 export function ListReseedRequests(arg1:string,arg2:number,arg3:number,arg4:number):Promise<api.ReseedRequestsResponse>;
 
@@ -148,5 +158,9 @@ export function TestSendCm(arg1:string):Promise<tester.Result>;
 export function TestTMDB(arg1:string):Promise<tester.Result>;
 
 export function TestUsenet(arg1:string,arg2:number):Promise<tester.Result>;
+
+export function UpdateMyLien(arg1:number,arg2:number,arg3:number,arg4:number,arg5:number,arg6:number):Promise<void>;
+
+export function UpdateMyTorrent(arg1:number,arg2:number,arg3:number,arg4:number,arg5:number,arg6:number):Promise<void>;
 
 export function VerifyLihdlSettingsPassword(arg1:string):Promise<boolean>;
