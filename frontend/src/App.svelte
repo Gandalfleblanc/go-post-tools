@@ -5,7 +5,7 @@
   import HydrackerTab from './HydrackerTab.svelte'
   import { logEntries, addLog, clearLogs } from './logs.js'
   import logo from './assets/logo.png'
-  import { ListCheckTorrents, ReseedFromLihdl, ReseedPrepare, ReseedExecute, SelectAnyTorrentFile, SelectMkvFile, GetVersion, StartWatchFolder, StopWatchFolder, IsWatching, CheckForUpdate, OpenBrowser, HistoryList, HistoryDelete, HistoryStats, DownloadUpdate, HasLihdlSettingsPassword, SetLihdlSettingsPassword, VerifyLihdlSettingsPassword, ClearLihdlSettingsPassword, IsLihdlPasswordManaged, IsHydrackerURLManaged, GetEffectiveHydrackerURL, FindHydrackerSources, FicheGetContent, HydrackerSearch, HydrackerGetByID, HydrackerGetByTmdbID, DownloadToDownloads, AutoReseedFromHydracker, AutoReseedDDLFromHydracker, ListReseedRequests, ListMyLiens, ListMyTorrents, DeleteMyLien, DeleteMyTorrent, DeleteMyNzb, UpdateMyLien, UpdateMyTorrent, GetMetaQualities, Notify } from '../wailsjs/go/main/App.js'
+  import { ListCheckTorrents, ReseedFromLihdl, ReseedPrepare, ReseedExecute, SelectAnyTorrentFile, SelectMkvFile, GetVersion, StartWatchFolder, StopWatchFolder, IsWatching, CheckForUpdate, OpenBrowser, HistoryList, HistoryDelete, HistoryStats, DownloadUpdate, HasLihdlSettingsPassword, SetLihdlSettingsPassword, VerifyLihdlSettingsPassword, ClearLihdlSettingsPassword, IsLihdlPasswordManaged, IsHydrackerURLManaged, GetEffectiveHydrackerURL, FindHydrackerSources, FicheGetContent, HydrackerSearch, HydrackerGetByID, HydrackerGetByTmdbID, DownloadToDownloads, AutoReseedFromHydracker, AutoReseedDDLFromHydracker, ListReseedRequests, ListMyLiens, ListMyTorrents, DeleteMyLien, DeleteMyTorrent, DeleteMyNzb, UpdateMyLien, UpdateMyTorrent, GetMetaQualities, ListTitlesSorted, GetUserProfile, Notify } from '../wailsjs/go/main/App.js'
 
   // --- Tabs ---
   const TABS = [
@@ -15,8 +15,10 @@
     { id: 'requests',  label: '📋 Demandes Reseed' },
     { id: 'reseed',    label: '♻️ Reseed' },
     { id: 'myuploads', label: '📤 Mes uploads' },
+    { id: 'stats',     label: '📊 Stats' },
     { id: 'history',   label: '📚 Historique' },
     { id: 'api',       label: '🔑 API' },
+    { id: 'apilog',    label: '🔬 Log API' },
     { id: 'settings',  label: '⚙️ Réglages' },
     { id: 'log',       label: '📋 Journal' },
   ]
@@ -530,6 +532,140 @@
 
   function qualityName(id) { return qualityOptions.find(q => q.id === id)?.name || ('qual#' + id) }
 
+// --- Stats (global site + fiches + uploaders + user search) ---
+  let statsLoading = false
+  let statsGlobal = null       // { topTitles, liensSample, torrentsSample, uploaders, qualDist, hostDist }
+  let statsError = ''
+
+  // Recherche user : affiche profil + aperçu uploads
+  let statsUserQuery = ''
+  let statsUserProfile = null
+  let statsUserLiens = []
+  let statsUserTorrents = []
+  let statsUserLoading = false
+  let statsUserError = ''
+
+  async function loadGlobalStats() {
+    statsLoading = true
+    statsError = ''
+    try {
+      // 1. Top fiches par popularité
+      const topTitles = await ListTitlesSorted('popularity:desc', 20, 1).catch(() => null)
+      // 2. Sample des 100 derniers liens + torrents pour stats distribution
+      const liensSample = await ListMyLiens('', 1).catch(() => null)   // sans filtre user = tous
+      const torrentsSample = await ListMyTorrents('', 1).catch(() => null)
+
+      // Agrégation locale
+      const liens = liensSample?.pagination?.data || []
+      const torrents = torrentsSample?.pagination?.data || []
+
+      // Top uploaders : count par id_user sur les samples combinés
+      const uploaderCount = {}
+      liens.forEach(l => {
+        const u = l.id_user || '?'
+        uploaderCount[u] = (uploaderCount[u] || 0) + 1
+      })
+      torrents.forEach(t => {
+        const u = t.author || t.id_user || '?'
+        uploaderCount[u] = (uploaderCount[u] || 0) + 1
+      })
+      const topUploaders = Object.entries(uploaderCount)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 15)
+        .map(([username, count]) => ({ username, count }))
+
+      // Répartition qualité (liens + torrents)
+      const qualCount = {}
+      ;[...liens, ...torrents].forEach(item => {
+        const q = item.qualite || item.quality || 0
+        if (q) qualCount[q] = (qualCount[q] || 0) + 1
+      })
+      const qualDist = Object.entries(qualCount)
+        .sort((a, b) => b[1] - a[1])
+        .map(([qid, count]) => ({ id: parseInt(qid), name: qualityName(parseInt(qid)), count }))
+
+      // Répartition hosts (liens only)
+      const hostCount = {}
+      liens.forEach(l => {
+        const h = l.host?.name || ('#' + (l.id_host || '?'))
+        hostCount[h] = (hostCount[h] || 0) + 1
+      })
+      const hostDist = Object.entries(hostCount)
+        .sort((a, b) => b[1] - a[1])
+        .map(([name, count]) => ({ name, count }))
+
+      statsGlobal = {
+        topTitles: topTitles?.data || [],
+        totalTitles: topTitles?.pagination?.total || 0,
+        totalLiens: liensSample?.pagination?.total || 0,
+        totalTorrents: torrentsSample?.pagination?.total || 0,
+        liensCount: liens.length,
+        torrentsCount: torrents.length,
+        topUploaders,
+        qualDist,
+        hostDist,
+      }
+    } catch(e) {
+      statsError = String(e?.message || e)
+    }
+    statsLoading = false
+  }
+
+  async function searchStatsUser() {
+    statsUserError = ''
+    statsUserProfile = null
+    statsUserLiens = []
+    statsUserTorrents = []
+    const q = (statsUserQuery || '').trim()
+    if (!q) return
+    statsUserLoading = true
+    try {
+      statsUserProfile = await GetUserProfile(q)
+      // Aperçu uploads du user
+      const [liens, torrents] = await Promise.all([
+        ListMyLiens(q, 1).catch(() => null),
+        ListMyTorrents(q, 1).catch(() => null),
+      ])
+      statsUserLiens = liens?.pagination?.data || []
+      statsUserTorrents = torrents?.pagination?.data || []
+      statsUserProfile._totalLiens = liens?.pagination?.total || 0
+      statsUserProfile._totalTorrents = torrents?.pagination?.total || 0
+    } catch(e) {
+      statsUserError = String(e?.message || e)
+    }
+    statsUserLoading = false
+  }
+
+  $: if (activeTab === 'stats' && !statsGlobal) loadGlobalStats()
+  $: if (activeTab === 'stats' && !qualityOptions.length) GetMetaQualities().then(q => qualityOptions = q || []).catch(() => {})
+
+  function fmtBytes(n) {
+    if (!n) return '0'
+    if (n > 1e12) return (n/1e12).toFixed(2) + ' TB'
+    if (n > 1e9) return (n/1e9).toFixed(2) + ' GB'
+    if (n > 1e6) return (n/1e6).toFixed(2) + ' MB'
+    return n + ' B'
+  }
+
+// --- Log API : capture les entrées api:log émises par le client Go ---
+  let apiLogs = []                  // []APILogEntry (max 500 entries, FIFO)
+  let apiLogFilter = 'all'          // 'all' | 'ok' | 'error'
+  let apiLogSearch = ''
+  let apiLogExpanded = {}           // { [idx]: true } pour afficher le body_preview
+  const API_LOG_MAX = 500
+
+  function clearApiLogs() { apiLogs = []; apiLogExpanded = {} }
+
+  $: filteredApiLogs = apiLogs.filter(e => {
+    if (apiLogFilter === 'ok' && (e.error || e.status >= 400)) return false
+    if (apiLogFilter === 'error' && !e.error && e.status < 400) return false
+    if (apiLogSearch) {
+      const q = apiLogSearch.toLowerCase()
+      if (!e.url?.toLowerCase().includes(q) && !e.body_preview?.toLowerCase().includes(q) && !e.error?.toLowerCase().includes(q)) return false
+    }
+    return true
+  })
+
 // Check Torrent
   let checkTorrents = []
   let checkLoading = false
@@ -621,6 +757,9 @@
         bytes: p.bytes || 0,
         total: p.total || 0,
       }
+    })
+    EventsOn('api:log', entry => {
+      apiLogs = [entry, ...apiLogs].slice(0, API_LOG_MAX)
     })
     EventsOn('reseed:progress', p => {
       reseedPct = p.percent ?? 0
@@ -1048,6 +1187,202 @@
             </div>
           </div>
         {/if}
+      </div>
+
+    <!-- ===== STATS ===== -->
+    {:else if activeTab === 'stats'}
+      <div class="tab-content">
+        <h2>📊 Stats</h2>
+
+        <!-- Recherche uploader -->
+        <div class="section">
+          <div class="section-header"><span>🔍 Rechercher un uploader</span></div>
+          <div class="field">
+            <div class="pwd-row">
+              <input type="text" bind:value={statsUserQuery}
+                placeholder="Pseudo (ex: Gandalf) ou ID numérique"
+                on:keydown={e => e.key === 'Enter' && !statsUserLoading && searchStatsUser()} />
+              <button class="btn-save" on:click={searchStatsUser} disabled={statsUserLoading || !statsUserQuery}>
+                {statsUserLoading ? '…' : '🔍 Chercher'}
+              </button>
+            </div>
+          </div>
+          {#if statsUserError}
+            <div style="color:#ff9585;font-size:12px;margin-top:6px">⚠ {statsUserError}</div>
+          {/if}
+          {#if statsUserProfile}
+            <div style="margin-top:12px;padding:14px;background:rgba(0,180,216,0.05);border:1px solid rgba(0,180,216,0.25);border-radius:10px">
+              <div style="display:flex;gap:14px;align-items:flex-start">
+                {#if statsUserProfile.image}
+                  <img src={`https://hydracker.com/${statsUserProfile.image}`} alt="" style="width:60px;height:60px;border-radius:50%;object-fit:cover" on:error={(e) => e.currentTarget.style.display = 'none'} />
+                {/if}
+                <div style="flex:1">
+                  <div style="font-size:15px;font-weight:600;color:var(--text)">
+                    {statsUserProfile.username}
+                    {#if statsUserProfile.IsPremium}<span style="color:#ffd60a;font-size:11px;margin-left:6px">⭐ Premium</span>{/if}
+                  </div>
+                  <div style="color:var(--text3);font-size:11px;margin-bottom:8px">
+                    #{statsUserProfile.id}
+                    {#if statsUserProfile.created_at}· Inscrit le {statsUserProfile.created_at.slice(0,10)}{/if}
+                    {#if statsUserProfile.country}· {statsUserProfile.country}{/if}
+                  </div>
+                  {#if statsUserProfile.bio}
+                    <div style="color:var(--text2);font-size:12px;margin-bottom:6px;font-style:italic">« {statsUserProfile.bio} »</div>
+                  {/if}
+                  <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px;margin-top:10px">
+                    <div class="stat-cell"><div class="stat-k">Uploaded</div><div class="stat-v">{fmtBytes(statsUserProfile.uploaded)}</div></div>
+                    <div class="stat-cell"><div class="stat-k">Downloaded</div><div class="stat-v">{fmtBytes(statsUserProfile.downloaded)}</div></div>
+                    <div class="stat-cell"><div class="stat-k">Ratio</div><div class="stat-v">{statsUserProfile.ratio || '—'}</div></div>
+                    <div class="stat-cell"><div class="stat-k">Followers</div><div class="stat-v">{statsUserProfile.followers_count || 0}</div></div>
+                    {#if statsUserProfile.wallet_balance}
+                      <div class="stat-cell"><div class="stat-k">Wallet</div><div class="stat-v">{statsUserProfile.wallet_balance}€</div></div>
+                    {/if}
+                    <div class="stat-cell"><div class="stat-k">Torrents postés</div><div class="stat-v">{statsUserProfile._totalTorrents ?? '?'}</div></div>
+                    <div class="stat-cell"><div class="stat-k">DDL postés</div><div class="stat-v">{statsUserProfile._totalLiens ?? '?'}</div></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          {/if}
+        </div>
+
+        <div class="section" style="display:flex;justify-content:space-between;align-items:center">
+          <span style="color:var(--text3);font-size:12px">Stats calculées depuis les 50 derniers items de chaque type. Rafraîchis pour mettre à jour.</span>
+          <button class="btn-test" on:click={loadGlobalStats} disabled={statsLoading}>🔄 Rafraîchir</button>
+        </div>
+
+        {#if statsLoading && !statsGlobal}
+          <div class="section"><div style="color:var(--text3);font-size:12px">Chargement…</div></div>
+        {:else if statsError}
+          <div class="section"><div style="color:#ff9585;font-size:12px">⚠ {statsError}</div></div>
+        {:else if statsGlobal}
+          <!-- Section 1 : Totaux globaux -->
+          <div class="section">
+            <div class="section-header"><span>🌍 Totaux site</span></div>
+            <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:10px">
+              <div class="stat-cell"><div class="stat-k">Fiches (titres)</div><div class="stat-v" style="font-size:18px">{statsGlobal.totalTitles.toLocaleString()}</div></div>
+              <div class="stat-cell"><div class="stat-k">Torrents</div><div class="stat-v" style="font-size:18px">{statsGlobal.totalTorrents.toLocaleString()}</div></div>
+              <div class="stat-cell"><div class="stat-k">Liens DDL</div><div class="stat-v" style="font-size:18px">{statsGlobal.totalLiens.toLocaleString()}</div></div>
+            </div>
+          </div>
+
+          <!-- Section 2 : Stats fiches (top populaires) -->
+          <div class="section">
+            <div class="section-header"><span>🎞 Top fiches (popularité)</span></div>
+            <div class="fiches-grid">
+              {#each statsGlobal.topTitles.slice(0, 10) as t}
+                <button class="fiche-card" on:click={() => { activeTab = 'fiches'; fichesMode = 'hydracker_id'; fichesQuery = String(t.id); fichesSearch() }} title={t.name}>
+                  {#if t.poster}
+                    <img src={t.poster} alt={t.name} loading="lazy" />
+                  {:else}
+                    <div class="fiche-no-poster">📽</div>
+                  {/if}
+                  <div class="fiche-info">
+                    <div class="fiche-name">{t.name}</div>
+                    <div class="fiche-meta">
+                      {#if t.release_date}{t.release_date.slice(0,4)}{/if}
+                      {#if t.score}· ⭐ {t.score.toFixed(1)}{/if}
+                    </div>
+                  </div>
+                </button>
+              {/each}
+            </div>
+          </div>
+
+          <!-- Section 3 : Top uploaders -->
+          <div class="section">
+            <div class="section-header"><span>👥 Top uploaders (sample récent)</span></div>
+            {#if statsGlobal.topUploaders.length}
+              {#each statsGlobal.topUploaders as u, i}
+                <div style="display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px solid rgba(255,255,255,0.04)">
+                  <span style="min-width:28px;color:var(--text3);font-size:11px">#{i+1}</span>
+                  <span style="flex:1;font-weight:{i<3?'600':'normal'};color:{i===0?'#ffd60a':(i===1?'#c0c0c0':(i===2?'#cd7f32':'var(--text)'))}">{u.username}</span>
+                  <div class="stat-bar" style="flex:2">
+                    <div class="stat-bar-fill" style="width:{Math.min(100, u.count/statsGlobal.topUploaders[0].count*100)}%"></div>
+                  </div>
+                  <span style="min-width:40px;text-align:right;color:var(--text2);font-size:12px">{u.count}</span>
+                  <button class="btn-test" on:click={() => { statsUserQuery = u.username; searchStatsUser() }}>👤 Voir</button>
+                </div>
+              {/each}
+            {:else}
+              <div style="color:var(--text3);font-size:12px">Aucune donnée.</div>
+            {/if}
+          </div>
+
+          <!-- Section 4 : Répartition qualité -->
+          {#if statsGlobal.qualDist.length}
+            <div class="section">
+              <div class="section-header"><span>🎬 Répartition par qualité (sample)</span></div>
+              {#each statsGlobal.qualDist.slice(0, 12) as q}
+                <div style="display:flex;align-items:center;gap:10px;padding:4px 0">
+                  <span style="flex:1;font-size:12px">{q.name}</span>
+                  <div class="stat-bar" style="flex:2">
+                    <div class="stat-bar-fill" style="width:{Math.min(100, q.count/statsGlobal.qualDist[0].count*100)}%;background:#7ef0c0"></div>
+                  </div>
+                  <span style="min-width:40px;text-align:right;color:var(--text2);font-size:12px">{q.count}</span>
+                </div>
+              {/each}
+            </div>
+          {/if}
+
+          <!-- Section 5 : Répartition hosts DDL -->
+          {#if statsGlobal.hostDist.length}
+            <div class="section">
+              <div class="section-header"><span>🔗 Hosts DDL les plus utilisés (sample)</span></div>
+              {#each statsGlobal.hostDist as h}
+                <div style="display:flex;align-items:center;gap:10px;padding:4px 0">
+                  <span style="flex:1;font-size:12px">{h.name}</span>
+                  <div class="stat-bar" style="flex:2">
+                    <div class="stat-bar-fill" style="width:{Math.min(100, h.count/statsGlobal.hostDist[0].count*100)}%;background:#ffd60a"></div>
+                  </div>
+                  <span style="min-width:40px;text-align:right;color:var(--text2);font-size:12px">{h.count}</span>
+                </div>
+              {/each}
+            </div>
+          {/if}
+        {/if}
+      </div>
+
+    <!-- ===== LOG API ===== -->
+    {:else if activeTab === 'apilog'}
+      <div class="tab-content">
+        <h2>🔬 Log API</h2>
+        <div class="section">
+          <div class="section-header">
+            <span>Requêtes capturées ({filteredApiLogs.length}/{apiLogs.length})</span>
+            <button class="btn-test" on:click={clearApiLogs}>🗑 Vider</button>
+          </div>
+          <div class="field" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+            <button class="btn-test" class:active-chip={apiLogFilter === 'all'} on:click={() => apiLogFilter = 'all'}>Toutes</button>
+            <button class="btn-test" class:active-chip={apiLogFilter === 'ok'} on:click={() => apiLogFilter = 'ok'}>✓ OK (2xx)</button>
+            <button class="btn-test" class:active-chip={apiLogFilter === 'error'} on:click={() => apiLogFilter = 'error'}>✗ Erreurs</button>
+            <input type="text" bind:value={apiLogSearch} placeholder="Filtrer par URL / body / erreur…" style="flex:1;min-width:200px" />
+          </div>
+        </div>
+
+        <div class="section">
+          {#if filteredApiLogs.length === 0}
+            <div style="color:var(--text3);font-size:12px">Aucune requête (fais une action dans l'app pour en générer).</div>
+          {:else}
+            {#each filteredApiLogs as e, i}
+              <div class="api-log-row" class:api-log-err={e.error || e.status >= 400} on:click={() => apiLogExpanded = { ...apiLogExpanded, [i]: !apiLogExpanded[i] }}>
+                <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;font-size:11px">
+                  <span style="color:var(--text3);font-family:monospace">{e.ts}</span>
+                  <span class="api-log-method api-log-method-{e.method}">{e.method}</span>
+                  <span style="color:{e.status >= 200 && e.status < 300 ? '#7ef0c0' : (e.status >= 400 ? '#ff6b6b' : 'var(--text3)')};font-weight:600;min-width:40px">{e.status || '—'}</span>
+                  <span style="color:var(--text3);font-family:monospace">{e.duration_ms}ms</span>
+                  <span style="flex:1;font-family:monospace;word-break:break-all;color:var(--text2)">{e.url}</span>
+                </div>
+                {#if e.error}
+                  <div style="color:#ff6b6b;font-size:11px;margin-top:4px">⚠ {e.error}</div>
+                {/if}
+                {#if apiLogExpanded[i] && e.body_preview}
+                  <pre style="background:rgba(0,0,0,0.3);padding:8px;border-radius:4px;margin-top:6px;font-size:10px;color:#7ef0c0;overflow-x:auto;white-space:pre-wrap;max-height:240px;overflow-y:auto">{e.body_preview}</pre>
+                {/if}
+              </div>
+            {/each}
+          {/if}
+        </div>
       </div>
 
     <!-- ===== HISTORIQUE ===== -->
@@ -2099,6 +2434,51 @@
   }
   .modal-title { font-size: 15px; font-weight: 600; color: var(--text); margin-bottom: 4px; }
   .modal-hint { color: var(--text3); font-size: 12px; margin-bottom: 12px; }
+
+  .stat-cell {
+    background: rgba(255,255,255,0.03);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 8px 10px;
+  }
+  .stat-k { font-size: 10px; color: var(--text3); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; }
+  .stat-v { font-size: 14px; font-weight: 600; color: var(--text); }
+
+  .stat-bar {
+    height: 8px;
+    background: rgba(255,255,255,0.05);
+    border-radius: 4px;
+    overflow: hidden;
+  }
+  .stat-bar-fill {
+    height: 100%;
+    background: #00b4d8;
+    transition: width 0.3s;
+  }
+
+  .api-log-row {
+    padding: 8px 10px;
+    border-bottom: 1px solid rgba(255,255,255,0.04);
+    cursor: pointer;
+    transition: background 0.1s;
+  }
+  .api-log-row:hover { background: rgba(255,255,255,0.02); }
+  .api-log-err { background: rgba(255,107,107,0.04); }
+  .api-log-method {
+    display: inline-block;
+    padding: 1px 8px;
+    border-radius: 4px;
+    font-weight: 700;
+    font-size: 10px;
+    letter-spacing: 0.5px;
+    min-width: 50px;
+    text-align: center;
+  }
+  .api-log-method-GET    { background: rgba(126,240,192,0.18); color: #7ef0c0; }
+  .api-log-method-POST   { background: rgba(0,180,216,0.18);   color: #00b4d8; }
+  .api-log-method-PUT    { background: rgba(255,214,10,0.18);  color: #ffd60a; }
+  .api-log-method-PATCH  { background: rgba(255,214,10,0.18);  color: #ffd60a; }
+  .api-log-method-DELETE { background: rgba(255,107,107,0.18); color: #ff6b6b; }
 
   .test-result {
     font-size: 12px; padding: 7px 11px; border-radius: 8px; margin-bottom: 12px;

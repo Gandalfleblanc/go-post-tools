@@ -57,6 +57,8 @@ export function GetMetaSubs():Promise<Array<api.Lang>>;
 
 export function GetMyUsername():Promise<string>;
 
+export function GetUserProfile(arg1:string):Promise<api.User>;
+
 export function GetVersion():Promise<string>;
 
 export function HasLihdlSettingsPassword():Promise<boolean>;
@@ -86,6 +88,8 @@ export function ListMyLiens(arg1:string,arg2:number):Promise<api.AdminLiensRespo
 export function ListMyTorrents(arg1:string,arg2:number):Promise<api.AdminTorrentsResponse>;
 
 export function ListReseedRequests(arg1:string,arg2:number,arg3:number,arg4:number):Promise<api.ReseedRequestsResponse>;
+
+export function ListTitlesSorted(arg1:string,arg2:number,arg3:number):Promise<api.TitlesResponse>;
 
 export function MediaSearch(arg1:string):Promise<Array<mediasearch.SearchResult>>;
 

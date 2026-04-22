@@ -399,6 +399,44 @@ export namespace api {
 		    return a;
 		}
 	}
+	export class TitlesResponse {
+	    current_page: number;
+	    per_page: number;
+	    total: number;
+	    last_page: number;
+	    data: PartialTitle[];
+	
+	    static createFrom(source: any = {}) {
+	        return new TitlesResponse(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.current_page = source["current_page"];
+	        this.per_page = source["per_page"];
+	        this.total = source["total"];
+	        this.last_page = source["last_page"];
+	        this.data = this.convertValues(source["data"], PartialTitle);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 	export class TorrentItem {
 	    id: number;
 	    name: string;
@@ -584,6 +622,62 @@ export namespace api {
 		    }
 		    return a;
 		}
+	}
+	export class User {
+	    id: number;
+	    username: string;
+	    email?: string;
+	    access_token?: string;
+	    avatar?: string;
+	    image?: string;
+	    created_at?: string;
+	    IsPremium?: boolean;
+	    is_pro?: boolean;
+	    wallet_balance?: string;
+	    uploaded?: number;
+	    downloaded?: number;
+	    ratio?: string;
+	    followers_count?: number;
+	    followed_users_count?: number;
+	    lists_count?: number;
+	    api_content_enabled?: boolean;
+	    language?: string;
+	    country?: string;
+	    bio?: string;
+	    status?: string;
+	    premium_expire?: string;
+	    unlimited_until?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new User(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.username = source["username"];
+	        this.email = source["email"];
+	        this.access_token = source["access_token"];
+	        this.avatar = source["avatar"];
+	        this.image = source["image"];
+	        this.created_at = source["created_at"];
+	        this.IsPremium = source["IsPremium"];
+	        this.is_pro = source["is_pro"];
+	        this.wallet_balance = source["wallet_balance"];
+	        this.uploaded = source["uploaded"];
+	        this.downloaded = source["downloaded"];
+	        this.ratio = source["ratio"];
+	        this.followers_count = source["followers_count"];
+	        this.followed_users_count = source["followed_users_count"];
+	        this.lists_count = source["lists_count"];
+	        this.api_content_enabled = source["api_content_enabled"];
+	        this.language = source["language"];
+	        this.country = source["country"];
+	        this.bio = source["bio"];
+	        this.status = source["status"];
+	        this.premium_expire = source["premium_expire"];
+	        this.unlimited_until = source["unlimited_until"];
+	    }
 	}
 
 }

@@ -46,7 +46,7 @@ import (
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
-const Version = "2.1.1"
+const Version = "3.0.0"
 
 type App struct {
 	ctx         context.Context
@@ -682,6 +682,10 @@ func (a *App) titleName(id int) string {
 
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
+	// Route les logs du client API vers l'onglet Log API (event api:log).
+	a.client.OnRequestLog = func(entry api.APILogEntry) {
+		wailsruntime.EventsEmit(a.ctx, "api:log", entry)
+	}
 }
 
 // --- Config ---
@@ -984,6 +988,13 @@ func (a *App) GetMyUsername() (string, error) {
 		return "", err
 	}
 	return u.Username, nil
+}
+
+// GetUserProfile retourne le profil complet (stats incluses) pour un user.
+// idOrUsername : "me", ID numérique ou pseudo — selon ce que l'API accepte.
+func (a *App) GetUserProfile(idOrUsername string) (*api.User, error) {
+	a.resetCancellation()
+	return a.client.GetUser(idOrUsername)
 }
 
 func (a *App) FicheGetContent(titleID int) (*FicheContent, error) {
@@ -1364,6 +1375,24 @@ func (a *App) UpdateMyTorrent(id, quality, lang, saison, episode, activeValue in
 		p.Active = &v
 	}
 	return a.client.UpdateTorrent(id, p)
+}
+
+// ListTitlesSorted expose /titles avec tri + pagination pour l'onglet Stats.
+// order : "popularity:desc" | "score:desc" | "release_date:desc" | ...
+func (a *App) ListTitlesSorted(order string, perPage, page int) (*api.TitlesResponse, error) {
+	a.resetCancellation()
+	if perPage <= 0 {
+		perPage = 20
+	}
+	if page <= 0 {
+		page = 1
+	}
+	f := api.TitleFilter{
+		PerPage: perPage,
+		Page:    page,
+		Order:   order,
+	}
+	return a.client.GetTitles(f)
 }
 
 // ListReseedRequests expose l'endpoint admin /reseed-requests au frontend.

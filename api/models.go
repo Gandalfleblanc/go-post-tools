@@ -27,12 +27,29 @@ type RegisterRequest struct {
 // --- User ---
 
 type User struct {
-	ID           int    `json:"id"`
-	Username     string `json:"username"`
-	Email        string `json:"email"`
-	AccessToken  string `json:"access_token,omitempty"`
-	Avatar       string `json:"avatar,omitempty"`
-	CreatedAt    string `json:"created_at,omitempty"`
+	ID            int     `json:"id"`
+	Username      string  `json:"username"`
+	Email         string  `json:"email,omitempty"`
+	AccessToken   string  `json:"access_token,omitempty"`
+	Avatar        string  `json:"avatar,omitempty"`
+	Image         string  `json:"image,omitempty"`
+	CreatedAt     string  `json:"created_at,omitempty"`
+	IsPremium     bool    `json:"IsPremium,omitempty"`
+	IsPro         bool    `json:"is_pro,omitempty"`
+	WalletBalance string  `json:"wallet_balance,omitempty"`
+	Uploaded      int64   `json:"uploaded,omitempty"`
+	Downloaded    int64   `json:"downloaded,omitempty"`
+	Ratio         string  `json:"ratio,omitempty"`
+	Followers     int     `json:"followers_count,omitempty"`
+	Following     int     `json:"followed_users_count,omitempty"`
+	ListsCount    int     `json:"lists_count,omitempty"`
+	APIEnabled    bool    `json:"api_content_enabled,omitempty"`
+	Language      string  `json:"language,omitempty"`
+	Country       string  `json:"country,omitempty"`
+	Bio           string  `json:"bio,omitempty"`
+	Status        string  `json:"status,omitempty"`
+	PremiumExpire string  `json:"premium_expire,omitempty"`
+	UnlimitedUntil *string `json:"unlimited_until,omitempty"`
 }
 
 // --- Titles ---

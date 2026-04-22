@@ -14,12 +14,29 @@ import (
 	"time"
 )
 
+// APILogEntry représente une requête HTTP API avec sa réponse (ou son erreur).
+// Utilisé par le hook OnRequestLog pour l'onglet "Log API" qui permet de
+// déboguer les appels en temps réel.
+type APILogEntry struct {
+	Timestamp   string  `json:"ts"`
+	Method      string  `json:"method"`
+	URL         string  `json:"url"`
+	Status      int     `json:"status"`
+	DurationMs  int64   `json:"duration_ms"`
+	BodyPreview string  `json:"body_preview"`
+	Error       string  `json:"error,omitempty"`
+}
+
 type Client struct {
 	token      string
 	baseURL    string
 	httpClient *http.Client
 	ctxMu      sync.Mutex
 	ctx        context.Context
+
+	// OnRequestLog est appelé à la fin de chaque requête API (succès ou erreur).
+	// Permet à App de router les logs vers Wails events pour l'onglet Log API.
+	OnRequestLog func(entry APILogEntry)
 }
 
 func NewClient(token, baseURL string) *Client {
@@ -103,18 +120,48 @@ func (c *Client) do(method, path string, body any, params url.Values) ([]byte, e
 		req.Header.Set("Content-Type", "application/json")
 	}
 	req.Header.Set("Accept", "application/json")
+	// User-Agent descriptif — obligatoire selon l'API Hydracker.
+	// Les UA génériques (Go-http-client, curl, python-requests) sont bloqués
+	// par le WAF et reçoivent une redirect vers la page de login au lieu
+	// de la réponse JSON attendue.
+	req.Header.Set("User-Agent", "GoPostTools/2.1 (https://github.com/Gandalfleblanc/Go-Post-Tools)")
 	if c.token != "" {
 		req.Header.Set("Authorization", "Bearer "+c.token)
 	}
 
+	start := time.Now()
 	resp, err := c.httpClient.Do(req)
+	duration := time.Since(start)
+
+	// Log entry : on le remplit au fur et à mesure, on le push à la fin.
+	entry := APILogEntry{
+		Timestamp:  time.Now().Format("15:04:05"),
+		Method:     method,
+		URL:        reqURL,
+		DurationMs: duration.Milliseconds(),
+	}
+	defer func() {
+		if c.OnRequestLog != nil {
+			c.OnRequestLog(entry)
+		}
+	}()
+
 	if err != nil {
+		entry.Error = err.Error()
 		return nil, err
 	}
 	defer resp.Body.Close()
 
 	data, err := io.ReadAll(resp.Body)
+	entry.Status = resp.StatusCode
+	// Preview du body (tronqué) pour debug
+	preview := string(data)
+	if len(preview) > 500 {
+		preview = preview[:500] + "…"
+	}
+	entry.BodyPreview = preview
 	if err != nil {
+		entry.Error = err.Error()
 		return nil, err
 	}
 
@@ -122,18 +169,20 @@ func (c *Client) do(method, path string, body any, params url.Values) ([]byte, e
 	case http.StatusOK, http.StatusCreated:
 		return data, nil
 	case http.StatusUnauthorized:
-		return nil, fmt.Errorf("unauthorized: vérifiez votre token")
+		err = fmt.Errorf("unauthorized: vérifiez votre token")
 	case http.StatusForbidden:
-		return nil, fmt.Errorf("accès refusé (403)")
+		err = fmt.Errorf("accès refusé (403)")
 	case http.StatusNotFound:
-		return nil, fmt.Errorf("ressource introuvable (404)")
+		err = fmt.Errorf("ressource introuvable (404)")
 	case http.StatusPaymentRequired:
-		return nil, fmt.Errorf("solde insuffisant (402)")
+		err = fmt.Errorf("solde insuffisant (402)")
 	case http.StatusUnprocessableEntity:
-		return nil, fmt.Errorf("données invalides (422): %s", string(data))
+		err = fmt.Errorf("données invalides (422): %s", string(data))
 	default:
-		return nil, fmt.Errorf("erreur HTTP %d: %s", resp.StatusCode, string(data))
+		err = fmt.Errorf("erreur HTTP %d: %s", resp.StatusCode, string(data))
 	}
+	entry.Error = err.Error()
+	return nil, err
 }
 
 func (c *Client) get(path string, params url.Values) ([]byte, error) {

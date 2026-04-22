@@ -98,6 +98,10 @@ export function GetMyUsername() {
   return window['go']['main']['App']['GetMyUsername']();
 }
 
+export function GetUserProfile(arg1) {
+  return window['go']['main']['App']['GetUserProfile'](arg1);
+}
+
 export function GetVersion() {
   return window['go']['main']['App']['GetVersion']();
 }
@@ -156,6 +160,10 @@ export function ListMyTorrents(arg1, arg2) {
 
 export function ListReseedRequests(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['ListReseedRequests'](arg1, arg2, arg3, arg4);
+}
+
+export function ListTitlesSorted(arg1, arg2, arg3) {
+  return window['go']['main']['App']['ListTitlesSorted'](arg1, arg2, arg3);
 }
 
 export function MediaSearch(arg1) {
