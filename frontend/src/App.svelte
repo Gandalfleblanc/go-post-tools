@@ -1761,7 +1761,43 @@
                       {/if}
                     {/if}
                   </div>
-                  <div class="post-actions">
+                  <div class="post-actions" style="flex-wrap:wrap;gap:6px">
+                    {#if localMkvCheck.content?.liens?.liens?.length && cfg.ftp_host && cfg.one_fichier_api_key}
+                      <button class="btn-save" style="background:#7ef0c0;color:#000"
+                        on:click={async () => {
+                          const fid = localMkvCheck.hydrackerFiche.id
+                          const sa = localMkvCheck.parsed?.season || 0
+                          const ep = localMkvCheck.parsed?.episode || 0
+                          closeLocalMkvCheck()
+                          autoReseedInput = String(fid)
+                          autoReseedSaison = sa
+                          autoReseedEpisode = ep
+                          activeTab = 'reseed'
+                          setTimeout(() => launchAutoReseedDDL(), 300)
+                        }}
+                        title="Téléchargement DDL 1fichier → streaming direct vers FTP configuré">
+                        ⚡ Lancer DDL → FTP
+                      </button>
+                    {:else if localMkvCheck.content?.liens?.liens?.length}
+                      <span style="color:var(--text3);font-size:11px;align-self:center">💡 Configure FTP + clé API 1fichier pour activer DDL→FTP</span>
+                    {/if}
+                    {#if localMkvCheck.content?.torrents?.torrents?.length && cfg.seedbox_url}
+                      <button class="btn-save"
+                        on:click={async () => {
+                          const fid = localMkvCheck.hydrackerFiche.id
+                          const sa = localMkvCheck.parsed?.season || 0
+                          const ep = localMkvCheck.parsed?.episode || 0
+                          closeLocalMkvCheck()
+                          autoReseedInput = String(fid)
+                          autoReseedSaison = sa
+                          autoReseedEpisode = ep
+                          activeTab = 'reseed'
+                          setTimeout(() => launchAutoReseed(), 300)
+                        }}
+                        title="Auto-reseed via torrent Hydracker → seedbox">
+                        ⚡ Torrent → seedbox
+                      </button>
+                    {/if}
                     <button class="btn-save" on:click={() => { activeTab = 'fiches'; fichesMode = 'hydracker_id'; fichesQuery = String(localMkvCheck.hydrackerFiche.id); fichesSearch(); closeLocalMkvCheck() }}>
                       🎞 Ouvrir dans Fiches
                     </button>
