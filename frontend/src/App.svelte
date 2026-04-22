@@ -489,6 +489,8 @@
   let reqPage = 1
   let reqTotalPages = 1
   let reqProcessing = {}            // { [requestId]: true }
+  let reqProgress = {}              // { [requestId]: { stage, msg, percent, speed_mb, bytes, total } }
+  let reqActiveID = 0               // ID de la demande en cours (pour router les events)
   let myUserID = 550257             // TODO: récupérer via GetMyUsername/user-profile/me
 
   async function loadReseedRequests() {
@@ -514,6 +516,8 @@
   async function processReseedRequest(req) {
     if (!req?.torrent?.title_id || !req?.torrent_id) { addLog('REQ', '⚠ request #' + req.id + ' : title_id/torrent_id manquant'); return }
     reqProcessing = { ...reqProcessing, [req.id]: true }
+    reqActiveID = req.id
+    reqProgress = { ...reqProgress, [req.id]: { stage: 'starting', msg: 'Démarrage…', percent: 0, speed_mb: 0, bytes: 0, total: 0 } }
     addLog('REQ', `▶ Traitement request #${req.id} → fiche #${req.torrent.title_id} torrent #${req.torrent_id}`)
     try {
       const saison = parseInt(req.torrent.torrent_name?.match(/[sS](\d{1,2})[eE]/)?.[1] || '0') || 0
@@ -522,21 +526,24 @@
       // push .torrent seedbox + force recheck. Nécessite FTP + seedbox + 1fichier.
       const r = await AutoReseedFullFromTorrent(req.torrent_id, req.torrent.title_id, saison, ep)
       addLog('REQ', `✓ Request #${req.id} : FTP ${r.expected_filename} · seedbox ${r.seedbox_path}${r.rechecked ? ' · recheck OK' : ' · recheck à refaire manuellement'}`)
+      reqProgress = { ...reqProgress, [req.id]: { ...reqProgress[req.id], stage: 'done', msg: '✓ Terminé', percent: 100 } }
       try { Notify('✓ Reseed demandé traité', req.torrent.torrent_name) } catch(e) {}
     } catch(e) {
-      // Si le workflow complet échoue (ex: pas de DDL 1fichier), fallback sur
-      // le simple push .torrent → seedbox sans DDL
+      // Fallback push torrent seul si workflow complet échoue
       addLog('REQ', `⚠ Reseed complet #${req.id} échoué (${e}) — fallback push torrent seul`)
       try {
         const saison = parseInt(req.torrent.torrent_name?.match(/[sS](\d{1,2})[eE]/)?.[1] || '0') || 0
         const ep = parseInt(req.torrent.torrent_name?.match(/[sS]\d{1,2}[eE](\d{1,3})/)?.[1] || '0') || 0
         const r2 = await AutoReseedFromHydracker(req.torrent.title_id, saison, ep, 0, 0)
         addLog('REQ', `✓ Fallback request #${req.id} : torrent #${r2.torrent_id} → seedbox`)
+        reqProgress = { ...reqProgress, [req.id]: { ...reqProgress[req.id], stage: 'done', msg: '✓ Fallback seedbox OK', percent: 100 } }
       } catch(e2) {
         addLog('REQ', `✗ Request #${req.id} : ${e2}`)
+        reqProgress = { ...reqProgress, [req.id]: { ...reqProgress[req.id], stage: 'error', msg: '✗ ' + String(e2) } }
       }
     }
     reqProcessing = { ...reqProcessing, [req.id]: false }
+    if (reqActiveID === req.id) reqActiveID = 0
   }
 
   async function processAllPending() {
@@ -877,6 +884,32 @@
     EventsOn('api:log', entry => {
       apiLogs = [entry, ...apiLogs].slice(0, API_LOG_MAX)
     })
+    // Events du workflow complet (DDL→FTP+torrent+recheck) — on les route vers
+    // la demande active (reqActiveID) pour afficher barre + vitesse dans le UI.
+    EventsOn('autoreseed_full:status', p => {
+      if (!reqActiveID) return
+      reqProgress = { ...reqProgress, [reqActiveID]: { ...(reqProgress[reqActiveID] || {}), stage: p.stage || '', msg: p.msg || '' } }
+      if (p.msg) addLog('AUTO', p.msg)
+    })
+    EventsOn('autoreseed_full:progress', p => {
+      if (!reqActiveID) return
+      reqProgress = { ...reqProgress, [reqActiveID]: {
+        ...(reqProgress[reqActiveID] || {}),
+        stage: 'ftp',
+        percent: p.percent || 0,
+        speed_mb: p.speed_mb || 0,
+        bytes: p.bytes || 0,
+        total: p.total || 0,
+      } }
+    })
+    EventsOn('autoreseed_full:seedbox', p => {
+      if (!reqActiveID) return
+      reqProgress = { ...reqProgress, [reqActiveID]: {
+        ...(reqProgress[reqActiveID] || {}),
+        stage: 'seedbox',
+        msg: `Seedbox : ${(p.percent || 0).toFixed(0)}%`,
+      } }
+    })
     EventsOn('reseed:progress', p => {
       reseedPct = p.percent ?? 0
       reseedSpeed = p.speed_mb ?? 0
@@ -1141,6 +1174,7 @@
             <div style="color:var(--text3);font-size:12px">Aucune demande dans ce filtre.</div>
           {:else}
             {#each reqList as req}
+              {@const prog = reqProgress[req.id]}
               <div class="req-card">
                 <div style="display:flex;gap:12px;align-items:flex-start">
                   {#if req.torrent?.title?.poster}
@@ -1161,12 +1195,32 @@
                     </div>
                   </div>
                   <div style="display:flex;flex-direction:column;gap:6px;align-self:center">
-                    <button class="btn-save" on:click={() => processReseedRequest(req)} disabled={reqProcessing[req.id] || req.status !== 'pending'} title="Auto-reseed via torrent Hydracker → seedbox">
+                    <button class="btn-save" on:click={() => processReseedRequest(req)} disabled={reqProcessing[req.id] || req.status !== 'pending'} title="Reseed complet : DDL → FTP + .torrent → seedbox + force recheck">
                       {reqProcessing[req.id] ? '…' : '⚡ Traiter'}
                     </button>
                     <button class="btn-test" on:click={() => OpenBrowser(`https://hydracker.com/titles/${req.torrent?.title_id}`)}>🌐 Fiche</button>
                   </div>
                 </div>
+                {#if prog && (reqProcessing[req.id] || prog.stage === 'done' || prog.stage === 'error')}
+                  <div class="req-progress">
+                    <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--text3);margin-bottom:4px">
+                      <span style="color:{prog.stage === 'error' ? '#ff6b6b' : (prog.stage === 'done' ? '#7ef0c0' : 'var(--text2)')}">
+                        {prog.stage === 'ftp' ? '⬆ FTP' : prog.stage === 'seedbox' ? '📦 Seedbox' : prog.stage === 'torrent_dl' ? '⬇ .torrent' : prog.stage === 'parsed' ? '✓ .torrent parsé' : prog.stage === 'ddl_search' ? '🔍 DDL' : prog.stage === 'ddl_picked' ? '🎯 DDL choisi' : prog.stage === 'token' ? '🔑 1fichier' : prog.stage === 'download' ? '⬇ DDL' : prog.stage === 'ftp_done' ? '✓ FTP' : prog.stage === 'recheck' ? '♻ Recheck' : prog.stage === 'done' ? '✓ Terminé' : prog.stage === 'error' ? '✗ Erreur' : prog.stage}
+                        {#if prog.msg} — {prog.msg}{/if}
+                      </span>
+                      {#if prog.stage === 'ftp' && prog.total > 0}
+                        <span style="font-family:monospace">
+                          {prog.percent.toFixed(1)}% · {prog.speed_mb.toFixed(1)} MB/s · {(prog.bytes/1e9).toFixed(2)}/{(prog.total/1e9).toFixed(2)} GB
+                        </span>
+                      {/if}
+                    </div>
+                    {#if prog.stage !== 'error'}
+                      <div class="progress-bar">
+                        <div class="progress-fill" class:done={prog.stage === 'done'} style="width:{prog.percent || 0}%"></div>
+                      </div>
+                    {/if}
+                  </div>
+                {/if}
               </div>
             {/each}
           {/if}
@@ -2680,6 +2734,28 @@
   .req-status-pending { background: rgba(255, 214, 10, 0.15); color: var(--yellow); border: 1px solid rgba(255, 214, 10, 0.35); }
   .req-status-done    { background: rgba(126, 240, 192, 0.12); color: #7ef0c0; border: 1px solid rgba(126, 240, 192, 0.35); }
   .req-status-rejected{ background: rgba(255, 107, 107, 0.12); color: #ff6b6b; border: 1px solid rgba(255, 107, 107, 0.35); }
+
+  .req-progress {
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px solid rgba(255,255,255,0.05);
+  }
+  .req-progress .progress-bar {
+    height: 8px;
+    background: rgba(255,255,255,0.06);
+    border-radius: 4px;
+    overflow: hidden;
+  }
+  .req-progress .progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #00b4d8, #7ef0c0);
+    transition: width 0.2s;
+    box-shadow: 0 0 10px rgba(0,180,216,0.4);
+  }
+  .req-progress .progress-fill.done {
+    background: #7ef0c0;
+    box-shadow: 0 0 10px rgba(126,240,192,0.5);
+  }
 
   .my-item {
     background: rgba(255,255,255,0.03);
