@@ -10,6 +10,10 @@ export function AutoReseedFromHydracker(arg1, arg2, arg3, arg4, arg5) {
   return window['go']['main']['App']['AutoReseedFromHydracker'](arg1, arg2, arg3, arg4, arg5);
 }
 
+export function AutoReseedFullFromTorrent(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['AutoReseedFullFromTorrent'](arg1, arg2, arg3, arg4);
+}
+
 export function CancelAllWorkflows() {
   return window['go']['main']['App']['CancelAllWorkflows']();
 }

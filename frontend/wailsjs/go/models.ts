@@ -60,6 +60,24 @@ export namespace api {
 		    return a;
 		}
 	}
+	export class HostDetails {
+	    id_host: number;
+	    name: string;
+	    url?: string;
+	    icon?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new HostDetails(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id_host = source["id_host"];
+	        this.name = source["name"];
+	        this.url = source["url"];
+	        this.icon = source["icon"];
+	    }
+	}
 	export class Lang {
 	    id: number;
 	    name: string;
@@ -76,15 +94,55 @@ export namespace api {
 	        this.code = source["code"];
 	    }
 	}
+	export class LangPivot {
+	    id: number;
+	    name: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new LangPivot(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.name = source["name"];
+	    }
+	}
+	export class QualDetails {
+	    id_qual: number;
+	    qual: string;
+	    label: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new QualDetails(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id_qual = source["id_qual"];
+	        this.qual = source["qual"];
+	        this.label = source["label"];
+	    }
+	}
 	export class Lien {
 	    id: number;
-	    lien: string;
-	    lang_id?: number;
-	    qual_id?: number;
-	    episode?: number;
+	    title_id?: number;
+	    lien?: string;
+	    id_host?: number;
+	    qualite?: number;
 	    saison?: number;
-	    host?: string;
+	    episode?: number;
+	    full_saison?: number;
+	    taille?: number;
 	    id_user?: string;
+	    active?: number;
+	    view?: number;
+	    created_at?: string;
+	    updated_at?: string;
+	    qual?: QualDetails;
+	    host?: HostDetails;
+	    langues_compact?: LangPivot[];
+	    subs_compact?: LangPivot[];
 	
 	    static createFrom(source: any = {}) {
 	        return new Lien(source);
@@ -93,14 +151,42 @@ export namespace api {
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
+	        this.title_id = source["title_id"];
 	        this.lien = source["lien"];
-	        this.lang_id = source["lang_id"];
-	        this.qual_id = source["qual_id"];
-	        this.episode = source["episode"];
+	        this.id_host = source["id_host"];
+	        this.qualite = source["qualite"];
 	        this.saison = source["saison"];
-	        this.host = source["host"];
+	        this.episode = source["episode"];
+	        this.full_saison = source["full_saison"];
+	        this.taille = source["taille"];
 	        this.id_user = source["id_user"];
+	        this.active = source["active"];
+	        this.view = source["view"];
+	        this.created_at = source["created_at"];
+	        this.updated_at = source["updated_at"];
+	        this.qual = this.convertValues(source["qual"], QualDetails);
+	        this.host = this.convertValues(source["host"], HostDetails);
+	        this.langues_compact = this.convertValues(source["langues_compact"], LangPivot);
+	        this.subs_compact = this.convertValues(source["subs_compact"], LangPivot);
 	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
 	}
 	export class LiensResult {
 	    liens: Lien[];
@@ -140,13 +226,20 @@ export namespace api {
 	}
 	export class Nzb {
 	    id: number;
-	    name: string;
-	    download_url: string;
-	    lang_id?: number;
-	    qual_id?: number;
-	    episode?: number;
+	    title_id?: number;
+	    name?: string;
+	    download_url?: string;
+	    qualite?: number;
 	    saison?: number;
+	    episode?: number;
+	    taille?: number;
 	    id_user?: string;
+	    active?: number;
+	    created_at?: string;
+	    updated_at?: string;
+	    qual?: QualDetails;
+	    langues_compact?: LangPivot[];
+	    subs_compact?: LangPivot[];
 	
 	    static createFrom(source: any = {}) {
 	        return new Nzb(source);
@@ -155,14 +248,39 @@ export namespace api {
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
+	        this.title_id = source["title_id"];
 	        this.name = source["name"];
 	        this.download_url = source["download_url"];
-	        this.lang_id = source["lang_id"];
-	        this.qual_id = source["qual_id"];
-	        this.episode = source["episode"];
+	        this.qualite = source["qualite"];
 	        this.saison = source["saison"];
+	        this.episode = source["episode"];
+	        this.taille = source["taille"];
 	        this.id_user = source["id_user"];
+	        this.active = source["active"];
+	        this.created_at = source["created_at"];
+	        this.updated_at = source["updated_at"];
+	        this.qual = this.convertValues(source["qual"], QualDetails);
+	        this.langues_compact = this.convertValues(source["langues_compact"], LangPivot);
+	        this.subs_compact = this.convertValues(source["subs_compact"], LangPivot);
 	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
 	}
 	export class NzbsResult {
 	    nzbs: Nzb[];
@@ -224,6 +342,7 @@ export namespace api {
 	        this.runtime = source["runtime"];
 	    }
 	}
+	
 	export class Quality {
 	    id: number;
 	    name: string;
@@ -439,14 +558,26 @@ export namespace api {
 	}
 	export class TorrentItem {
 	    id: number;
-	    name: string;
-	    download_url: string;
-	    lang_id?: number;
-	    qual_id?: number;
-	    episode?: number;
+	    title_id?: number;
+	    torrent_name?: string;
+	    download_url?: string;
+	    info_hash?: string;
+	    hash?: string;
+	    qualite?: number;
 	    saison?: number;
-	    size?: number;
-	    id_user?: string;
+	    episode?: number;
+	    full_saison?: boolean;
+	    taille?: number;
+	    seeders?: number;
+	    leechers?: number;
+	    completed?: number;
+	    author?: string;
+	    active?: boolean;
+	    created_at?: string;
+	    updated_at?: string;
+	    qual?: QualDetails;
+	    langues_compact?: LangPivot[];
+	    subs_compact?: LangPivot[];
 	
 	    static createFrom(source: any = {}) {
 	        return new TorrentItem(source);
@@ -455,15 +586,45 @@ export namespace api {
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
-	        this.name = source["name"];
+	        this.title_id = source["title_id"];
+	        this.torrent_name = source["torrent_name"];
 	        this.download_url = source["download_url"];
-	        this.lang_id = source["lang_id"];
-	        this.qual_id = source["qual_id"];
-	        this.episode = source["episode"];
+	        this.info_hash = source["info_hash"];
+	        this.hash = source["hash"];
+	        this.qualite = source["qualite"];
 	        this.saison = source["saison"];
-	        this.size = source["size"];
-	        this.id_user = source["id_user"];
+	        this.episode = source["episode"];
+	        this.full_saison = source["full_saison"];
+	        this.taille = source["taille"];
+	        this.seeders = source["seeders"];
+	        this.leechers = source["leechers"];
+	        this.completed = source["completed"];
+	        this.author = source["author"];
+	        this.active = source["active"];
+	        this.created_at = source["created_at"];
+	        this.updated_at = source["updated_at"];
+	        this.qual = this.convertValues(source["qual"], QualDetails);
+	        this.langues_compact = this.convertValues(source["langues_compact"], LangPivot);
+	        this.subs_compact = this.convertValues(source["subs_compact"], LangPivot);
 	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
 	}
 	export class TorrentsResult {
 	    torrents: TorrentItem[];
@@ -718,6 +879,7 @@ export namespace config {
 	    lihdl_settings_password_hash: string;
 	    watch_folder: string;
 	    watch_auto_start: boolean;
+	    proxy_url: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new Config(source);
@@ -758,6 +920,7 @@ export namespace config {
 	        this.lihdl_settings_password_hash = source["lihdl_settings_password_hash"];
 	        this.watch_folder = source["watch_folder"];
 	        this.watch_auto_start = source["watch_auto_start"];
+	        this.proxy_url = source["proxy_url"];
 	    }
 	}
 
@@ -826,6 +989,34 @@ export namespace main {
 	        this.host = source["host"];
 	        this.size_bytes = source["size_bytes"];
 	        this.ftp_remote_name = source["ftp_remote_name"];
+	    }
+	}
+	export class AutoReseedFullResult {
+	    torrent_id: number;
+	    torrent_name: string;
+	    expected_filename: string;
+	    matched_lien_id: number;
+	    matched_host: string;
+	    size_bytes: number;
+	    info_hash: string;
+	    seedbox_path: string;
+	    rechecked: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new AutoReseedFullResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.torrent_id = source["torrent_id"];
+	        this.torrent_name = source["torrent_name"];
+	        this.expected_filename = source["expected_filename"];
+	        this.matched_lien_id = source["matched_lien_id"];
+	        this.matched_host = source["matched_host"];
+	        this.size_bytes = source["size_bytes"];
+	        this.info_hash = source["info_hash"];
+	        this.seedbox_path = source["seedbox_path"];
+	        this.rechecked = source["rechecked"];
 	    }
 	}
 	export class AutoReseedResult {

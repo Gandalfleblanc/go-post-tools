@@ -46,7 +46,7 @@ import (
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
-const Version = "3.2.2"
+const Version = "3.3.0"
 
 type App struct {
 	ctx         context.Context
@@ -1782,6 +1782,183 @@ func (a *App) AutoReseedDDLFromHydracker(titleID, saison, episode, preferQuality
 		Host:          lienData.HostName(),
 		SizeBytes:     totalSize,
 		FTPRemoteName: filename,
+	}, nil
+}
+
+// AutoReseedFullResult : résultat du workflow "reseed complet" qui combine
+// DDL→FTP + push .torrent seedbox + force recheck. C'est le flow idéal pour
+// traiter une demande de reseed où un seul torrent existe mais il y a un DDL
+// dispo comme source alternative.
+type AutoReseedFullResult struct {
+	TorrentID        int    `json:"torrent_id"`
+	TorrentName      string `json:"torrent_name"`
+	ExpectedFilename string `json:"expected_filename"`
+	MatchedLienID    int    `json:"matched_lien_id"`
+	MatchedHost      string `json:"matched_host"`
+	SizeBytes        int64  `json:"size_bytes"`
+	InfoHash         string `json:"info_hash"`
+	SeedboxPath      string `json:"seedbox_path"`
+	Rechecked        bool   `json:"rechecked"`
+}
+
+// AutoReseedFullFromTorrent : workflow complet pour une demande de reseed.
+//  1. Download .torrent via /api/v1/torrents/{id}/download (Bearer)
+//  2. Parse metainfo → extrait le nom exact du fichier attendu (single-file only)
+//  3. Cherche le meilleur DDL dispo sur la fiche (1fichier prioritaire)
+//  4. 1fichier get_token → URL directe
+//  5. Stream download DDL → FTP upload sous le nom EXACT du torrent
+//  6. Push .torrent à ruTorrent (addtorrent.php)
+//  7. Sleep 2s puis force recheck (d.check_hash) → rtorrent commence à seed
+//
+// Multi-file torrents : non supportés pour l'instant (besoin de mapper les
+// fichiers du DDL vers ceux du torrent, cas rare).
+func (a *App) AutoReseedFullFromTorrent(torrentID, titleID, saison, episode int) (*AutoReseedFullResult, error) {
+	a.resetCancellation()
+	if torrentID <= 0 || titleID <= 0 {
+		return nil, fmt.Errorf("torrent_id et title_id requis")
+	}
+	if a.cfg.SeedboxURL == "" {
+		return nil, fmt.Errorf("seedbox non configurée (Réglages)")
+	}
+	if a.cfg.FTPHost == "" {
+		return nil, fmt.Errorf("FTP non configuré (Réglages)")
+	}
+	if a.cfg.OneFichierApiKey == "" {
+		return nil, fmt.Errorf("clé API 1fichier non configurée (Réglages)")
+	}
+	emit := func(stage, msg string) {
+		wailsruntime.EventsEmit(a.ctx, "autoreseed_full:status", map[string]interface{}{"stage": stage, "msg": msg})
+	}
+
+	// 1. Download .torrent via API
+	emit("torrent_dl", fmt.Sprintf("Téléchargement .torrent #%d…", torrentID))
+	torrentData, err := a.downloadHydrackerTorrent(torrentID)
+	if err != nil {
+		return nil, fmt.Errorf("download torrent : %w", err)
+	}
+	if len(torrentData) < 50 || torrentData[0] != 'd' {
+		return nil, fmt.Errorf("torrent invalide (%d bytes)", len(torrentData))
+	}
+
+	// 2. Sauvegarde temp + parse metainfo
+	tmpTor, err := os.CreateTemp("", fmt.Sprintf("reseedfull-%d-*.torrent", torrentID))
+	if err != nil {
+		return nil, fmt.Errorf("tmp torrent : %w", err)
+	}
+	tmpTorPath := tmpTor.Name()
+	if _, err := tmpTor.Write(torrentData); err != nil {
+		tmpTor.Close()
+		os.Remove(tmpTorPath)
+		return nil, fmt.Errorf("write tmp torrent : %w", err)
+	}
+	tmpTor.Close()
+	defer os.Remove(tmpTorPath)
+
+	mi, err := metainfo.LoadFromFile(tmpTorPath)
+	if err != nil {
+		return nil, fmt.Errorf("parse metainfo : %w", err)
+	}
+	info, err := mi.UnmarshalInfo()
+	if err != nil {
+		return nil, fmt.Errorf("unmarshal info : %w", err)
+	}
+	if len(info.Files) > 0 {
+		return nil, fmt.Errorf("torrent multi-files non supporté (info.Files count=%d) — pour l'instant seuls les single-file sont pris en charge", len(info.Files))
+	}
+	expectedFilename := info.Name
+	infoHash := mi.HashInfoBytes().HexString()
+	emit("parsed", fmt.Sprintf("Fichier attendu : %s (%.2f GB)", expectedFilename, float64(info.Length)/1e9))
+
+	// 3. Cherche le meilleur DDL sur la fiche (mêmes saison/épisode)
+	emit("ddl_search", "Recherche DDL 1fichier…")
+	liensResp, err := a.client.GetLiens(titleID, api.ContentFilter{Season: saison, Episode: episode})
+	if err != nil {
+		return nil, fmt.Errorf("liste DDL : %w", err)
+	}
+	if len(liensResp.Liens) == 0 {
+		// Retry sans saison/épisode
+		if fb, err := a.client.GetLiens(titleID, api.ContentFilter{}); err == nil {
+			liensResp = fb
+		}
+	}
+	if len(liensResp.Liens) == 0 {
+		return nil, fmt.Errorf("aucun DDL dispo sur la fiche #%d", titleID)
+	}
+	bestLien := pickBestLien(liensResp.Liens, 0, 0)
+	if bestLien == nil {
+		return nil, fmt.Errorf("aucun DDL sélectionnable")
+	}
+	emit("ddl_picked", fmt.Sprintf("DDL choisi : #%d host=%s", bestLien.ID, bestLien.HostName()))
+
+	// 4. Récupère URL partage réelle + 1fichier get_token
+	lienData, err := a.client.GetLienByID(bestLien.ID)
+	if err != nil {
+		return nil, fmt.Errorf("get lien #%d : %w", bestLien.ID, err)
+	}
+	if lienData == nil || lienData.URL == "" {
+		return nil, fmt.Errorf("lien manquant pour DDL #%d", bestLien.ID)
+	}
+	shareURL := lienData.URL
+	host := strings.ToLower(lienData.HostName())
+	if !strings.Contains(host, "1fichier") && !strings.Contains(shareURL, "1fichier.com") {
+		return nil, fmt.Errorf("host %s non supporté en auto (seul 1fichier l'est pour l'instant)", lienData.HostName())
+	}
+	emit("token", "Obtention URL directe 1fichier…")
+	directURL, err := downloader.OneFichierGetToken(a.workContext(), a.cfg.OneFichierApiKey, shareURL)
+	if err != nil {
+		return nil, fmt.Errorf("1fichier token : %w", err)
+	}
+
+	// 5. Stream download → FTP avec le nom EXACT du torrent
+	emit("download", "Ouverture du stream…")
+	reader, totalSize, _, err := downloader.StreamDownload(a.workContext(), directURL)
+	if err != nil {
+		return nil, fmt.Errorf("download stream : %w", err)
+	}
+	defer reader.Close()
+
+	emit("ftp", fmt.Sprintf("Upload FTP : %s (%.2f GB)", expectedFilename, float64(totalSize)/1e9))
+	progReader := &downloader.ProgressReader{
+		R:     reader,
+		Total: totalSize,
+		OnProgress: func(p downloader.Progress) {
+			wailsruntime.EventsEmit(a.ctx, "autoreseed_full:progress", p)
+		},
+	}
+	if err := ftpup.UploadFromReader(a.workContext(), a.cfg.FTPHost, a.cfg.FTPPort, a.cfg.FTPUser, a.cfg.FTPPassword, a.cfg.FTPPath, expectedFilename, progReader, totalSize, nil); err != nil {
+		return nil, fmt.Errorf("ftp : %w", err)
+	}
+	emit("ftp_done", fmt.Sprintf("FTP OK : %s", expectedFilename))
+
+	// 6. Push .torrent à ruTorrent
+	emit("seedbox", "Ajout du .torrent sur ruTorrent…")
+	seedPath, err := seedbox.Upload(a.workContext(), a.cfg.SeedboxURL, a.cfg.SeedboxUser, a.cfg.SeedboxPassword, a.cfg.SeedboxLabel, tmpTorPath, func(p seedbox.Progress) {
+		wailsruntime.EventsEmit(a.ctx, "autoreseed_full:seedbox", p)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("seedbox : %w", err)
+	}
+
+	// 7. Sleep 2s + force recheck (rtorrent a besoin d'un moment pour enregistrer)
+	emit("recheck", "Force recheck…")
+	time.Sleep(2 * time.Second)
+	rechecked := true
+	if err := rutorrent.Recheck(a.cfg.SeedboxURL, a.cfg.SeedboxUser, a.cfg.SeedboxPassword, infoHash); err != nil {
+		emit("recheck_warn", fmt.Sprintf("recheck auto échoué (%v) — à faire manuellement si besoin", err))
+		rechecked = false
+	}
+	emit("done", "Reseed complet terminé")
+
+	return &AutoReseedFullResult{
+		TorrentID:        torrentID,
+		TorrentName:      info.Name,
+		ExpectedFilename: expectedFilename,
+		MatchedLienID:    bestLien.ID,
+		MatchedHost:      lienData.HostName(),
+		SizeBytes:        totalSize,
+		InfoHash:         infoHash,
+		SeedboxPath:      seedPath,
+		Rechecked:        rechecked,
 	}, nil
 }
 

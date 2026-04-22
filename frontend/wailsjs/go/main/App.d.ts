@@ -13,6 +13,8 @@ export function AutoReseedDDLFromHydracker(arg1:number,arg2:number,arg3:number,a
 
 export function AutoReseedFromHydracker(arg1:number,arg2:number,arg3:number,arg4:number,arg5:number):Promise<main.AutoReseedResult>;
 
+export function AutoReseedFullFromTorrent(arg1:number,arg2:number,arg3:number,arg4:number):Promise<main.AutoReseedFullResult>;
+
 export function CancelAllWorkflows():Promise<void>;
 
 export function CancelDDLHost(arg1:string):Promise<void>;

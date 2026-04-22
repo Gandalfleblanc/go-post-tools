@@ -5,7 +5,7 @@
   import HydrackerTab from './HydrackerTab.svelte'
   import { logEntries, addLog, clearLogs } from './logs.js'
   import logo from './assets/logo.png'
-  import { ListCheckTorrents, ReseedFromLihdl, ReseedPrepare, ReseedExecute, SelectAnyTorrentFile, SelectMkvFile, GetVersion, StartWatchFolder, StopWatchFolder, IsWatching, CheckForUpdate, OpenBrowser, HistoryList, HistoryDelete, HistoryStats, DownloadUpdate, HasLihdlSettingsPassword, SetLihdlSettingsPassword, VerifyLihdlSettingsPassword, ClearLihdlSettingsPassword, IsLihdlPasswordManaged, IsHydrackerURLManaged, GetEffectiveHydrackerURL, FindHydrackerSources, FicheGetContent, HydrackerSearch, HydrackerGetByID, HydrackerGetByTmdbID, DownloadToDownloads, AutoReseedFromHydracker, AutoReseedDDLFromHydracker, ListReseedRequests, ListMyLiens, ListMyTorrents, DeleteMyLien, DeleteMyTorrent, DeleteMyNzb, UpdateMyLien, UpdateMyTorrent, GetMetaQualities, ListTitlesSorted, GetUserProfile, ParseFilename, Notify } from '../wailsjs/go/main/App.js'
+  import { ListCheckTorrents, ReseedFromLihdl, ReseedPrepare, ReseedExecute, SelectAnyTorrentFile, SelectMkvFile, GetVersion, StartWatchFolder, StopWatchFolder, IsWatching, CheckForUpdate, OpenBrowser, HistoryList, HistoryDelete, HistoryStats, DownloadUpdate, HasLihdlSettingsPassword, SetLihdlSettingsPassword, VerifyLihdlSettingsPassword, ClearLihdlSettingsPassword, IsLihdlPasswordManaged, IsHydrackerURLManaged, GetEffectiveHydrackerURL, FindHydrackerSources, FicheGetContent, HydrackerSearch, HydrackerGetByID, HydrackerGetByTmdbID, DownloadToDownloads, AutoReseedFromHydracker, AutoReseedDDLFromHydracker, AutoReseedFullFromTorrent, ListReseedRequests, ListMyLiens, ListMyTorrents, DeleteMyLien, DeleteMyTorrent, DeleteMyNzb, UpdateMyLien, UpdateMyTorrent, GetMetaQualities, ListTitlesSorted, GetUserProfile, ParseFilename, Notify } from '../wailsjs/go/main/App.js'
 
   // --- Tabs ---
   const TABS = [
@@ -425,10 +425,25 @@
       const r = await AutoReseedFromHydracker(t.title_id, t.saison || 0, t.episode || 0, 0, 0)
       addLog('SEED', `✓ Reseed OK → ${r.torrent_name}`)
       try { Notify('✓ Reseed OK', t.torrent_name || t.name) } catch(e) {}
-      // Refresh pour voir le nouveau seeders count
       setTimeout(loadMySeeds, 1500)
     } catch(e) {
       addLog('SEED', `✗ Reseed #${t.id} : ${e}`)
+    }
+    mySeedsActioning = { ...mySeedsActioning, [t.id]: false }
+  }
+
+  // Reseed complet : DDL 1fichier → FTP (nom exact torrent) + .torrent seedbox + recheck
+  async function fullReseedFromCheck(t) {
+    if (!t?.title_id || !t?.id) return
+    mySeedsActioning = { ...mySeedsActioning, [t.id]: true }
+    addLog('SEED', `▶ Reseed complet torrent #${t.id} (DDL→FTP+seedbox+recheck)`)
+    try {
+      const r = await AutoReseedFullFromTorrent(t.id, t.title_id, t.saison || 0, t.episode || 0)
+      addLog('SEED', `✓ ${r.expected_filename} → FTP OK · seedbox ${r.seedbox_path}${r.rechecked ? ' · recheck OK' : ''}`)
+      try { Notify('✓ Reseed complet OK', r.expected_filename) } catch(e) {}
+      setTimeout(loadMySeeds, 1500)
+    } catch(e) {
+      addLog('SEED', `✗ Reseed complet #${t.id} : ${e}`)
     }
     mySeedsActioning = { ...mySeedsActioning, [t.id]: false }
   }
@@ -497,17 +512,29 @@
   $: if (reqFilter) { reqPage = 1 }
 
   async function processReseedRequest(req) {
-    if (!req?.torrent?.title_id) { addLog('REQ', '⚠ request #' + req.id + ' : title_id manquant'); return }
+    if (!req?.torrent?.title_id || !req?.torrent_id) { addLog('REQ', '⚠ request #' + req.id + ' : title_id/torrent_id manquant'); return }
     reqProcessing = { ...reqProcessing, [req.id]: true }
-    addLog('REQ', `▶ Traitement request #${req.id} → fiche #${req.torrent.title_id}`)
+    addLog('REQ', `▶ Traitement request #${req.id} → fiche #${req.torrent.title_id} torrent #${req.torrent_id}`)
     try {
       const saison = parseInt(req.torrent.torrent_name?.match(/[sS](\d{1,2})[eE]/)?.[1] || '0') || 0
       const ep = parseInt(req.torrent.torrent_name?.match(/[sS]\d{1,2}[eE](\d{1,3})/)?.[1] || '0') || 0
-      const r = await AutoReseedFromHydracker(req.torrent.title_id, saison, ep, 0, 0)
-      addLog('REQ', `✓ Request #${req.id} : torrent #${r.torrent_id} → seedbox OK`)
+      // Workflow complet : DDL 1fichier → FTP (avec nom exact du torrent) +
+      // push .torrent seedbox + force recheck. Nécessite FTP + seedbox + 1fichier.
+      const r = await AutoReseedFullFromTorrent(req.torrent_id, req.torrent.title_id, saison, ep)
+      addLog('REQ', `✓ Request #${req.id} : FTP ${r.expected_filename} · seedbox ${r.seedbox_path}${r.rechecked ? ' · recheck OK' : ' · recheck à refaire manuellement'}`)
       try { Notify('✓ Reseed demandé traité', req.torrent.torrent_name) } catch(e) {}
     } catch(e) {
-      addLog('REQ', `✗ Request #${req.id} : ${e}`)
+      // Si le workflow complet échoue (ex: pas de DDL 1fichier), fallback sur
+      // le simple push .torrent → seedbox sans DDL
+      addLog('REQ', `⚠ Reseed complet #${req.id} échoué (${e}) — fallback push torrent seul`)
+      try {
+        const saison = parseInt(req.torrent.torrent_name?.match(/[sS](\d{1,2})[eE]/)?.[1] || '0') || 0
+        const ep = parseInt(req.torrent.torrent_name?.match(/[sS]\d{1,2}[eE](\d{1,3})/)?.[1] || '0') || 0
+        const r2 = await AutoReseedFromHydracker(req.torrent.title_id, saison, ep, 0, 0)
+        addLog('REQ', `✓ Fallback request #${req.id} : torrent #${r2.torrent_id} → seedbox`)
+      } catch(e2) {
+        addLog('REQ', `✗ Request #${req.id} : ${e2}`)
+      }
     }
     reqProcessing = { ...reqProcessing, [req.id]: false }
   }
@@ -1723,9 +1750,15 @@
                   </div>
                 </div>
                 <div style="display:flex;flex-direction:column;gap:4px;align-self:center">
-                  <button class="btn-save" on:click={() => autoReseedFromCheck(t)} disabled={mySeedsActioning[t.id]} title="Auto-reseed via API → seedbox">
-                    {mySeedsActioning[t.id] ? '…' : '⚡ Auto-reseed'}
+                  <button class="btn-save" on:click={() => autoReseedFromCheck(t)} disabled={mySeedsActioning[t.id]} title="Push .torrent sur seedbox (nécessite que quelqu'un seed pour que BT retrouve le fichier)">
+                    {mySeedsActioning[t.id] ? '…' : '⚡ Torrent → seedbox'}
                   </button>
+                  {#if cfg.ftp_host && cfg.one_fichier_api_key}
+                    <button class="btn-save" style="background:#7ef0c0;color:#000" on:click={() => fullReseedFromCheck(t)} disabled={mySeedsActioning[t.id]}
+                      title="Reseed complet : DDL 1fichier → FTP (nom exact torrent) + .torrent seedbox + force recheck">
+                      {mySeedsActioning[t.id] ? '…' : '⚡⚡ Reseed complet'}
+                    </button>
+                  {/if}
                   <button class="btn-test" on:click={() => OpenBrowser(`https://hydracker.com/titles/${t.title_id}`)}>🌐 Fiche</button>
                 </div>
               </div>
