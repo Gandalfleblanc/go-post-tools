@@ -10,6 +10,7 @@ import (
 	"github.com/jlaffaye/ftp"
 
 	"go-post-tools/internal/seedbox"
+	"go-post-tools/internal/webdav"
 )
 
 type Result struct {
@@ -156,6 +157,45 @@ func TestSeedbox(url, user, password string) Result {
 		return fail(err)
 	}
 	return ok("Connexion ruTorrent réussie")
+}
+
+// TestQBit : test de connexion qBittorrent Web UI via POST /api/v2/auth/login.
+// qBit renvoie "Ok." en body si login OK, "Fails." sinon.
+func TestQBit(baseURL, user, password string) Result {
+	if baseURL == "" {
+		return fail(fmt.Errorf("URL qBittorrent non configurée"))
+	}
+	u := strings.TrimRight(baseURL, "/") + "/api/v2/auth/login"
+	form := strings.NewReader("username=" + user + "&password=" + password)
+	req, _ := http.NewRequest("POST", u, form)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Referer", strings.TrimRight(baseURL, "/"))
+	req.Header.Set("User-Agent", "GoPostTools/3.3")
+	c := &http.Client{Timeout: 10 * time.Second}
+	resp, err := c.Do(req)
+	if err != nil {
+		return fail(err)
+	}
+	defer resp.Body.Close()
+	buf := make([]byte, 128)
+	n, _ := resp.Body.Read(buf)
+	body := strings.TrimSpace(string(buf[:n]))
+	if resp.StatusCode != 200 {
+		return fail(fmt.Errorf("HTTP %d: %s", resp.StatusCode, body))
+	}
+	if strings.HasPrefix(body, "Ok") {
+		return ok("Connexion qBittorrent réussie")
+	}
+	return fail(fmt.Errorf("login refusé: %s", body))
+}
+
+// TestModSeedbox : PROPFIND sur la racine WebDAV pour valider URL + credentials.
+// Compatible Nextcloud / ownCloud (endpoint /remote.php/dav/files/{user}/).
+func TestModSeedbox(baseURL, user, password string) Result {
+	if err := webdav.Ping(baseURL, user, password); err != nil {
+		return fail(err)
+	}
+	return ok("Connexion WebDAV réussie (Seedbox Modérateur)")
 }
 
 func TestUsenet(host string, port int) Result {

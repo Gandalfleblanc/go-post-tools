@@ -30,6 +30,10 @@ export function ClearLihdlSettingsPassword(arg1) {
   return window['go']['main']['App']['ClearLihdlSettingsPassword'](arg1);
 }
 
+export function ClearSeedboxSettingsPassword(arg1) {
+  return window['go']['main']['App']['ClearSeedboxSettingsPassword'](arg1);
+}
+
 export function DeleteLien(arg1) {
   return window['go']['main']['App']['DeleteLien'](arg1);
 }
@@ -112,6 +116,10 @@ export function GetVersion() {
 
 export function HasLihdlSettingsPassword() {
   return window['go']['main']['App']['HasLihdlSettingsPassword']();
+}
+
+export function HasSeedboxSettingsPassword() {
+  return window['go']['main']['App']['HasSeedboxSettingsPassword']();
 }
 
 export function HistoryDelete(arg1) {
@@ -214,8 +222,8 @@ export function PostTorrent(arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8) {
   return window['go']['main']['App']['PostTorrent'](arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8);
 }
 
-export function PostTorrentWorkflow(arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8) {
-  return window['go']['main']['App']['PostTorrentWorkflow'](arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8);
+export function PostTorrentWorkflow(arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9) {
+  return window['go']['main']['App']['PostTorrentWorkflow'](arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9);
 }
 
 export function ReadFileChunk(arg1, arg2, arg3) {
@@ -262,6 +270,10 @@ export function SetLihdlSettingsPassword(arg1, arg2) {
   return window['go']['main']['App']['SetLihdlSettingsPassword'](arg1, arg2);
 }
 
+export function SetSeedboxSettingsPassword(arg1, arg2) {
+  return window['go']['main']['App']['SetSeedboxSettingsPassword'](arg1, arg2);
+}
+
 export function SkipCurrentEpisode() {
   return window['go']['main']['App']['SkipCurrentEpisode']();
 }
@@ -294,8 +306,16 @@ export function TestLihdl(arg1, arg2, arg3) {
   return window['go']['main']['App']['TestLihdl'](arg1, arg2, arg3);
 }
 
+export function TestModSeedbox(arg1, arg2, arg3) {
+  return window['go']['main']['App']['TestModSeedbox'](arg1, arg2, arg3);
+}
+
 export function TestOneFichier(arg1) {
   return window['go']['main']['App']['TestOneFichier'](arg1);
+}
+
+export function TestQBit(arg1, arg2, arg3) {
+  return window['go']['main']['App']['TestQBit'](arg1, arg2, arg3);
 }
 
 export function TestSeedbox(arg1, arg2, arg3) {
@@ -324,4 +344,8 @@ export function UpdateMyTorrent(arg1, arg2, arg3, arg4, arg5, arg6) {
 
 export function VerifyLihdlSettingsPassword(arg1) {
   return window['go']['main']['App']['VerifyLihdlSettingsPassword'](arg1);
+}
+
+export function VerifySeedboxSettingsPassword(arg1) {
+  return window['go']['main']['App']['VerifySeedboxSettingsPassword'](arg1);
 }

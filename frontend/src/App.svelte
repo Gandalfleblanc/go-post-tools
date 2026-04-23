@@ -1,6 +1,6 @@
 <script>
   import { onMount, onDestroy } from 'svelte'
-  import { GetConfig, SaveConfig, TestHydracker, TestTMDB, TestOneFichier, TestSendCm, TestFTP, TestSeedbox, TestUsenet, TestLihdl } from '../wailsjs/go/main/App.js'
+  import { GetConfig, SaveConfig, TestHydracker, TestTMDB, TestOneFichier, TestSendCm, TestFTP, TestSeedbox, TestQBit, TestModSeedbox, TestUsenet, TestLihdl, HasSeedboxSettingsPassword, SetSeedboxSettingsPassword, VerifySeedboxSettingsPassword, ClearSeedboxSettingsPassword } from '../wailsjs/go/main/App.js'
   import { EventsOn, EventsOff } from '../wailsjs/runtime/runtime.js'
   import HydrackerTab from './HydrackerTab.svelte'
   import { logEntries, addLog, clearLogs } from './logs.js'
@@ -36,6 +36,9 @@
     parpar_redundancy: 5, parpar_threads: 8, parpar_slice_size: 768000,
     ftp_host: '', ftp_port: 21, ftp_user: '', ftp_password: '', ftp_path: '/',
     seedbox_url: '', seedbox_user: '', seedbox_password: '', seedbox_label: '',
+    qbit_url: '', qbit_user: '', qbit_password: '',
+    mod_seedbox_url: '', mod_seedbox_user: '', mod_seedbox_password: '',
+    ftp_mod_host: '', ftp_mod_port: 21, ftp_mod_user: '', ftp_mod_password: '', ftp_mod_path: '/',
     tracker_url: '', torrent_piece_size: 8388608,
     lihdl_user: '', lihdl_password: '',
     watch_folder: '', watch_auto_start: false,
@@ -64,6 +67,53 @@
   async function checkLihdlPasswordStatus() {
     try { lihdlHasPassword = await HasLihdlSettingsPassword() } catch(e) { lihdlHasPassword = false }
     try { lihdlManaged = await IsLihdlPasswordManaged() } catch(e) { lihdlManaged = false }
+  }
+
+  // --- Protection des sections SEEDBOX/FTP (mdp partagé entre admins) ---
+  let seedboxUnlocked = false
+  let seedboxHasPassword = false
+  let seedboxModal = null  // null | 'unlock' | 'create' | 'change' | 'remove'
+  let seedboxPwdInput = ''
+  let seedboxPwdCurrent = ''
+  let seedboxPwdNew = ''
+  let seedboxPwdConfirm = ''
+  let seedboxPwdError = ''
+
+  async function checkSeedboxPasswordStatus() {
+    try { seedboxHasPassword = await HasSeedboxSettingsPassword() } catch(e) { seedboxHasPassword = false }
+  }
+
+  function openSeedboxLockModal() {
+    seedboxPwdInput = ''; seedboxPwdCurrent = ''; seedboxPwdNew = ''; seedboxPwdConfirm = ''; seedboxPwdError = ''
+    seedboxModal = seedboxHasPassword ? 'unlock' : 'create'
+  }
+
+  async function submitSeedboxPwd() {
+    seedboxPwdError = ''
+    try {
+      if (seedboxModal === 'unlock') {
+        const ok = await VerifySeedboxSettingsPassword(seedboxPwdInput)
+        if (!ok) { seedboxPwdError = 'Mot de passe incorrect'; return }
+        seedboxUnlocked = true
+        seedboxModal = null
+      } else if (seedboxModal === 'create') {
+        if (seedboxPwdNew.length < 4) { seedboxPwdError = 'Mot de passe trop court (4 min)'; return }
+        if (seedboxPwdNew !== seedboxPwdConfirm) { seedboxPwdError = 'Les mots de passe ne correspondent pas'; return }
+        await SetSeedboxSettingsPassword('', seedboxPwdNew)
+        seedboxHasPassword = true
+        seedboxUnlocked = true
+        seedboxModal = null
+      } else if (seedboxModal === 'change') {
+        if (seedboxPwdNew.length < 4) { seedboxPwdError = 'Mot de passe trop court (4 min)'; return }
+        if (seedboxPwdNew !== seedboxPwdConfirm) { seedboxPwdError = 'Les mots de passe ne correspondent pas'; return }
+        await SetSeedboxSettingsPassword(seedboxPwdCurrent, seedboxPwdNew)
+        seedboxModal = null
+      } else if (seedboxModal === 'remove') {
+        await ClearSeedboxSettingsPassword(seedboxPwdCurrent)
+        seedboxHasPassword = false
+        seedboxModal = null
+      }
+    } catch(e) { seedboxPwdError = String(e).replace('Error: ', '') }
   }
 
   function openLihdlLockModal() {
@@ -836,6 +886,7 @@
     try { appVersion = await GetVersion() } catch {}
     try { updateInfo = await CheckForUpdate() } catch {}
     checkLihdlPasswordStatus()
+    checkSeedboxPasswordStatus()
     try { hydrackerURLManaged = await IsHydrackerURLManaged() } catch {}
     if (hydrackerURLManaged) {
       try { cfg.hydracker_base_url = await GetEffectiveHydrackerURL() } catch {}
@@ -2308,10 +2359,33 @@
             </div>
           </div>
 
-          <!-- FTP -->
+          <!-- ===== Sections seedbox/FTP — protégées par mot de passe partagé entre admins ===== -->
+          {#if seedboxHasPassword && !seedboxUnlocked}
+            <div class="section" style="text-align:center;padding:24px;border:1px dashed rgba(255,214,10,0.35);background:rgba(255,214,10,0.04)">
+              <div style="font-size:14px;color:var(--yellow);margin-bottom:14px">🔒 Sections seedbox / FTP verrouillées</div>
+              <button class="btn-save" on:click={openSeedboxLockModal}>🔓 Déverrouiller</button>
+            </div>
+          {:else}
+          {#if seedboxHasPassword && seedboxUnlocked}
+            <div style="margin:0 0 14px;padding:8px 14px;background:rgba(126,240,192,0.08);border:1px solid rgba(126,240,192,0.25);border-radius:8px;display:flex;justify-content:space-between;align-items:center">
+              <span style="color:#7ef0c0;font-size:12px">🔓 Sections seedbox déverrouillées (session en cours)</span>
+              <div style="display:flex;gap:6px">
+                <button class="btn-test" on:click={() => { seedboxPwdInput=''; seedboxPwdCurrent=''; seedboxPwdNew=''; seedboxPwdConfirm=''; seedboxPwdError=''; seedboxModal='change' }}>Changer mdp</button>
+                <button class="btn-test" on:click={() => { seedboxPwdInput=''; seedboxPwdCurrent=''; seedboxPwdNew=''; seedboxPwdConfirm=''; seedboxPwdError=''; seedboxModal='remove' }}>Retirer</button>
+                <button class="btn-test" on:click={() => seedboxUnlocked = false}>🔒 Re-verrouiller</button>
+              </div>
+            </div>
+          {:else if !seedboxHasPassword}
+            <div style="margin:0 0 14px;padding:8px 14px;background:rgba(0,180,216,0.05);border:1px solid rgba(0,180,216,0.2);border-radius:8px;display:flex;justify-content:space-between;align-items:center">
+              <span style="color:var(--text2);font-size:12px">🔓 Sections seedbox non protégées</span>
+              <button class="btn-test" on:click={openSeedboxLockModal}>🔒 Définir un mot de passe</button>
+            </div>
+          {/if}
+
+          <!-- FTP RUTORRENT -->
           <div class="section">
             <div class="section-header">
-              <span>FTP</span>
+              <span>FTP RUTORRENT</span>
               <button class="btn-test" on:click={() => runTest('ftp', () => TestFTP(cfg.ftp_host, cfg.ftp_port, cfg.ftp_user, cfg.ftp_password))}>
                 {#if testLoading.ftp}…{:else}Tester{/if}
               </button>
@@ -2373,6 +2447,103 @@
               <input id="seedbox-label" type="text" bind:value={cfg.seedbox_label} placeholder="hydracker" />
             </div>
           </div>
+
+          <!-- Seedbox qBittorrent Web UI -->
+          <div class="section">
+            <div class="section-header">
+              <span>SEEDBOX MODÉRATEUR qBittorrent WEB UI</span>
+              <button class="btn-test" on:click={() => runTest('qbit', () => TestQBit(cfg.qbit_url, cfg.qbit_user, cfg.qbit_password))}>
+                {#if testLoading.qbit}…{:else}Tester{/if}
+              </button>
+            </div>
+            {#if testResults.qbit}
+              <div class="test-result" class:ok={testResults.qbit.ok}>{testResults.qbit.message}</div>
+            {/if}
+            <div class="field">
+              <label for="qbit-url">URL qBittorrent Web UI</label>
+              <input id="qbit-url" type="text" bind:value={cfg.qbit_url} placeholder="https://my-seedbox.example/qbittorrent/" />
+            </div>
+            <div class="fields-grid">
+              <div class="field">
+                <label>Utilisateur</label>
+                <input type="text" bind:value={cfg.qbit_user} />
+              </div>
+              <div class="field">
+                <label>Mot de passe</label>
+                <input type="password" bind:value={cfg.qbit_password} />
+              </div>
+            </div>
+          </div>
+
+          <!-- FTP MODÉRATEUR (upload gros fichiers MKV pour le workflow Torrent MODO) -->
+          <div class="section">
+            <div class="section-header">
+              <span>FTP MODÉRATEUR</span>
+              <button class="btn-test" on:click={() => runTest('ftpmod', () => TestFTP(cfg.ftp_mod_host, cfg.ftp_mod_port, cfg.ftp_mod_user, cfg.ftp_mod_password))}>
+                {#if testLoading.ftpmod}…{:else}Tester{/if}
+              </button>
+            </div>
+            {#if testResults.ftpmod}
+              <div class="test-result" class:ok={testResults.ftpmod.ok}>{testResults.ftpmod.message}</div>
+            {/if}
+            <div style="color:var(--text3);font-size:11px;margin-bottom:8px">
+              FTP/SFTP de la seedbox modérateur (utilisé par le workflow Torrent MODO pour uploader le MKV).
+            </div>
+            <div class="fields-grid">
+              <div class="field">
+                <label>Hôte</label>
+                <input type="text" bind:value={cfg.ftp_mod_host} placeholder="ftp.cluster1c.seedbox.fr" />
+              </div>
+              <div class="field">
+                <label>Port</label>
+                <input type="number" bind:value={cfg.ftp_mod_port} />
+              </div>
+              <div class="field">
+                <label>Utilisateur</label>
+                <input type="text" bind:value={cfg.ftp_mod_user} />
+              </div>
+              <div class="field">
+                <label>Mot de passe</label>
+                <input type="password" bind:value={cfg.ftp_mod_password} />
+              </div>
+              <div class="field">
+                <label>Dossier distant</label>
+                <input type="text" bind:value={cfg.ftp_mod_path} placeholder="/Seedbox" />
+              </div>
+            </div>
+          </div>
+
+          <!-- Seedbox Modérateur (upload via site web qui sync avec la seedbox) -->
+          <div class="section">
+            <div class="section-header">
+              <span>SEEDBOX MODÉRATEUR (web — alternative WebDAV)</span>
+              <button class="btn-test" on:click={() => runTest('modsb', () => TestModSeedbox(cfg.mod_seedbox_url, cfg.mod_seedbox_user, cfg.mod_seedbox_password))}>
+                {#if testLoading.modsb}…{:else}Tester{/if}
+              </button>
+            </div>
+            {#if testResults.modsb}
+              <div class="test-result" class:ok={testResults.modsb.ok}>{testResults.modsb.message}</div>
+            {/if}
+            <div style="color:var(--text3);font-size:11px;margin-bottom:8px">
+              Site web où tu uploades tes fichiers, qui seront ensuite synchronisés avec la seedbox.
+            </div>
+            <div class="field">
+              <label for="modsb-url">URL</label>
+              <input id="modsb-url" type="text" bind:value={cfg.mod_seedbox_url} placeholder="https://seedbox-mods.example" />
+            </div>
+            <div class="fields-grid">
+              <div class="field">
+                <label>Utilisateur</label>
+                <input type="text" bind:value={cfg.mod_seedbox_user} />
+              </div>
+              <div class="field">
+                <label>Mot de passe</label>
+                <input type="password" bind:value={cfg.mod_seedbox_password} />
+              </div>
+            </div>
+          </div>
+          {/if}
+          <!-- ===== Fin sections protégées ===== -->
 
         </div>
 
@@ -2447,6 +2618,53 @@
           {#if lihdlPwdError}<p class="modal-err">✗ {lihdlPwdError}</p>{/if}
           <div class="modal-actions" style="margin-top:12px">
             <button type="button" class="btn-secondary" on:click={() => lihdlModal = null}>Annuler</button>
+            <button type="submit" class="btn-primary">Valider</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+{/if}
+
+<!-- ===== Modale mot de passe SEEDBOX (FTP+seedbox sections) ===== -->
+{#if seedboxModal}
+  <div class="modal-backdrop" on:click|self={() => seedboxModal = null}>
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3>
+          {#if seedboxModal === 'unlock'}🔓 Déverrouiller Seedbox/FTP
+          {:else if seedboxModal === 'create'}🔐 Définir un mot de passe
+          {:else if seedboxModal === 'change'}🔑 Changer le mot de passe
+          {:else}🗑 Retirer la protection{/if}
+        </h3>
+        <button class="modal-close" on:click={() => seedboxModal = null}>✕</button>
+      </div>
+      <div class="modal-body">
+        <form on:submit|preventDefault={submitSeedboxPwd}>
+          {#if seedboxModal === 'unlock'}
+            <div class="field"><label>Mot de passe</label>
+              <input type="password" bind:value={seedboxPwdInput} autofocus autocomplete="off" /></div>
+          {:else if seedboxModal === 'create'}
+            <p class="modal-hint">Mot de passe partagé entre les admins. Donne-le aux 3 autres pour qu'ils puissent déverrouiller leurs sections aussi.</p>
+            <div class="field"><label>Nouveau mot de passe</label>
+              <input type="password" bind:value={seedboxPwdNew} autofocus autocomplete="off" /></div>
+            <div class="field"><label>Confirmer</label>
+              <input type="password" bind:value={seedboxPwdConfirm} autocomplete="off" /></div>
+          {:else if seedboxModal === 'change'}
+            <div class="field"><label>Mot de passe actuel</label>
+              <input type="password" bind:value={seedboxPwdCurrent} autofocus autocomplete="off" /></div>
+            <div class="field"><label>Nouveau mot de passe</label>
+              <input type="password" bind:value={seedboxPwdNew} autocomplete="off" /></div>
+            <div class="field"><label>Confirmer</label>
+              <input type="password" bind:value={seedboxPwdConfirm} autocomplete="off" /></div>
+          {:else}
+            <div class="field"><label>Mot de passe actuel</label>
+              <input type="password" bind:value={seedboxPwdCurrent} autofocus autocomplete="off" /></div>
+            <p class="modal-hint">Les sections redeviendront accessibles sans mot de passe.</p>
+          {/if}
+          {#if seedboxPwdError}<p class="modal-err">✗ {seedboxPwdError}</p>{/if}
+          <div class="modal-actions" style="margin-top:12px">
+            <button type="button" class="btn-secondary" on:click={() => seedboxModal = null}>Annuler</button>
             <button type="submit" class="btn-primary">Valider</button>
           </div>
         </form>

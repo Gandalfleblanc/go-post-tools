@@ -42,7 +42,7 @@
   let postSubs = []        // [{id, name}]
   let langsAutoFilled = false
   let subsAutoFilled = false
-  let postUploadTypes = { nzb: false, torrent: true, ddl: false }
+  let postUploadTypes = { nzb: false, torrent_admin: true, torrent_modo: false, ddl: false }
   let postDdlHosts = { onefichier: true, sendcm: true }
   let postSeason = 0
   let postEpisode = 0
@@ -214,7 +214,7 @@
       }
     }
     // Force type Torrent uniquement (pas de DDL/NZB puisqu'on n'a pas de MKV)
-    postUploadTypes = { torrent: true, nzb: false, ddl: false }
+    postUploadTypes = { torrent_admin: true, torrent_modo: false, nzb: false, ddl: false }
     addLog('TOR', `📂 .torrent existant chargé depuis Reseed — ${file.name}`)
   }
 
@@ -569,8 +569,15 @@
 
   // Mappe une liste de codes ISO audio vers les noms Hydracker, en gérant les pistes multiples.
   // ex: ['fr','fr','en'] → [TrueFrench, French (Canada), English]
+  //
+  // Règle spéciale : si le nom du fichier contient "VFi" (VF internationale,
+  // doublage français métropolitain), on ne met JAMAIS French (Canada) — c'est
+  // incompatible par définition. Toutes les pistes FR → TrueFrench.
   function mapAudioTracks(codes) {
-    const frenchOrder = ['TrueFrench', 'French (Canada)', 'FRENCH AD']
+    const hasVFi = /\bvfi\b/i.test(file?.name || '')
+    const frenchOrder = hasVFi
+      ? ['TrueFrench', 'TrueFrench', 'FRENCH AD']
+      : ['TrueFrench', 'French (Canada)', 'FRENCH AD']
     const result = []
     let frIdx = 0
     for (const code of codes) {
@@ -976,8 +983,10 @@
 
     // Étape 1 : Torrent d'abord (séquentiel)
     // - Mode "existing" (depuis Reseed) : upload direct du .torrent à Hydracker (pas de FTP/seedbox)
-    // - Mode normal : ftpup + create + hydracker + seedbox
-    if (postUploadTypes.torrent) {
+    // - Mode normal : ftpup + create + hydracker + seedbox (admin=ruTorrent OU modo=qBit)
+    const torrentActive = postUploadTypes.torrent_admin || postUploadTypes.torrent_modo
+    const seedboxType = postUploadTypes.torrent_modo ? 'modo' : 'admin'
+    if (torrentActive) {
       if (existingTorrentPath) {
         try {
           const r = await withRetry(
@@ -992,11 +1001,11 @@
         try {
           const r = await withRetry(
             'Torrent',
-            () => PostTorrentWorkflow(titleID, postQuality, langIDs, subIDs, mkvFilePath, nfo, postSeason, postEpisode),
+            () => PostTorrentWorkflow(titleID, postQuality, langIDs, subIDs, mkvFilePath, nfo, postSeason, postEpisode, seedboxType),
             r => !!r?.hydracker_id,
           )
-          successes.push(`Torrent #${r.hydracker_id} ajouté + seedbox OK`)
-        } catch(e) { errors.push(`Torrent : ${e}`) }
+          successes.push(`Torrent #${r.hydracker_id} ajouté + seedbox ${seedboxType.toUpperCase()} OK`)
+        } catch(e) { errors.push(`Torrent ${seedboxType.toUpperCase()} : ${e}`) }
       }
     }
 
@@ -1273,7 +1282,7 @@
       <!-- Actions principales (Lancer / Stop / Réinitialiser) juste sous le fichier -->
       <div class="post-actions">
         <button class="btn-start" title="⌘↵"
-          disabled={postLoading || queueProcessing || (queue.length === 0 && (!postQuality || !postLanguages.length || !selectedHydracker || (!postUploadTypes.torrent && !postUploadTypes.nzb && !postUploadTypes.ddl)))}
+          disabled={postLoading || queueProcessing || (queue.length === 0 && (!postQuality || !postLanguages.length || !selectedHydracker || (!postUploadTypes.torrent_admin && !postUploadTypes.torrent_modo && !postUploadTypes.nzb && !postUploadTypes.ddl)))}
           on:click={() => queue.length > 0 ? processQueue() : lancerPost()}>
           {postLoading || queueProcessing ? '…' : (queue.length > 0 ? `▶ Lancer la queue (${queue.length})` : '▶ Lancer')}
         </button>
@@ -1439,12 +1448,19 @@
             <div class="post-field">
               <div class="post-field-label">Uploader via</div>
               <div class="upload-types">
-                <label class="check-label"><input type="checkbox" bind:checked={postUploadTypes.torrent} /> Torrent</label>
+                <label class="check-label"><input type="checkbox" checked={postUploadTypes.torrent_admin}
+                  on:change={(e) => { const v = e.currentTarget.checked; postUploadTypes = { ...postUploadTypes, torrent_admin: v, torrent_modo: v ? false : postUploadTypes.torrent_modo } }} />
+                  Torrent ADMIN
+                </label>
+                <label class="check-label"><input type="checkbox" checked={postUploadTypes.torrent_modo}
+                  on:change={(e) => { const v = e.currentTarget.checked; postUploadTypes = { ...postUploadTypes, torrent_modo: v, torrent_admin: v ? false : postUploadTypes.torrent_admin } }} />
+                  Torrent MODO
+                </label>
                 <label class="check-label"><input type="checkbox" bind:checked={postUploadTypes.nzb} /> NZB</label>
                 <label class="check-label"><input type="checkbox" bind:checked={postUploadTypes.ddl} /> DDL</label>
-                <button class="btn-full-auto" class:active={postUploadTypes.torrent && postUploadTypes.nzb && postUploadTypes.ddl}
-                  on:click={() => { const on = !(postUploadTypes.torrent && postUploadTypes.nzb && postUploadTypes.ddl); postUploadTypes = { torrent: on, nzb: on, ddl: on } }}>
-                  ⚡ Full Auto
+                <button class="btn-full-auto" class:active={postUploadTypes.torrent_admin && postUploadTypes.nzb && postUploadTypes.ddl}
+                  on:click={() => { const on = !(postUploadTypes.torrent_admin && postUploadTypes.nzb && postUploadTypes.ddl); postUploadTypes = { torrent_admin: on, torrent_modo: false, nzb: on, ddl: on } }}>
+                  ⚡ Full Auto (ADMIN)
                 </button>
               </div>
             </div>
@@ -1509,7 +1525,7 @@
           {/if}
 
           <!-- Barres Torrent -->
-          {#if postUploadTypes.torrent && (torrentState.stage || torrentState.ftpPct > 0)}
+          {#if (postUploadTypes.torrent_admin || postUploadTypes.torrent_modo) && (torrentState.stage || torrentState.ftpPct > 0)}
             <div class="ddl-bars">
               <div class="ddl-bar-card">
                 <div class="ddl-bar-header">
@@ -1519,7 +1535,7 @@
 
                 <div class="ddl-step">
                   <div class="ddl-step-label">
-                    <span>1. Upload FTP</span>
+                    <span>1. {postUploadTypes.torrent_modo ? 'Upload FTP Modérateur' : 'Upload FTP'}</span>
                     <span class="ddl-bar-speed">{torrentState.ftpSpeed.toFixed(1)} MB/s · {torrentState.ftpPct.toFixed(0)}%</span>
                   </div>
                   <div class="progress-bar"><div class="progress-fill" style="width:{torrentState.ftpPct}%"></div></div>
@@ -1653,7 +1669,8 @@
                 <span class="recap-val">
                   {(() => {
                     const parts = []
-                    if (postUploadTypes.torrent) parts.push('Torrent')
+                    if (postUploadTypes.torrent_admin) parts.push('Torrent ADMIN')
+                    if (postUploadTypes.torrent_modo) parts.push('Torrent MODO')
                     if (postUploadTypes.nzb) parts.push('NZB')
                     if (postUploadTypes.ddl) {
                       const hosts = []

@@ -23,6 +23,8 @@ export function CheckForUpdate():Promise<main.UpdateInfo>;
 
 export function ClearLihdlSettingsPassword(arg1:string):Promise<void>;
 
+export function ClearSeedboxSettingsPassword(arg1:string):Promise<void>;
+
 export function DeleteLien(arg1:number):Promise<void>;
 
 export function DeleteMyLien(arg1:number):Promise<void>;
@@ -64,6 +66,8 @@ export function GetUserProfile(arg1:string):Promise<api.User>;
 export function GetVersion():Promise<string>;
 
 export function HasLihdlSettingsPassword():Promise<boolean>;
+
+export function HasSeedboxSettingsPassword():Promise<boolean>;
 
 export function HistoryDelete(arg1:number):Promise<void>;
 
@@ -115,7 +119,7 @@ export function PostNzbWorkflow(arg1:number,arg2:number,arg3:Array<string>,arg4:
 
 export function PostTorrent(arg1:number,arg2:number,arg3:Array<string>,arg4:Array<string>,arg5:string,arg6:string,arg7:number,arg8:number):Promise<api.UploadTorrentResult>;
 
-export function PostTorrentWorkflow(arg1:number,arg2:number,arg3:Array<string>,arg4:Array<string>,arg5:string,arg6:string,arg7:number,arg8:number):Promise<main.TorrentWorkflowResult>;
+export function PostTorrentWorkflow(arg1:number,arg2:number,arg3:Array<string>,arg4:Array<string>,arg5:string,arg6:string,arg7:number,arg8:number,arg9:string):Promise<main.TorrentWorkflowResult>;
 
 export function ReadFileChunk(arg1:string,arg2:number,arg3:number):Promise<Array<number>>;
 
@@ -139,6 +143,8 @@ export function SelectTorrentFile():Promise<string>;
 
 export function SetLihdlSettingsPassword(arg1:string,arg2:string):Promise<void>;
 
+export function SetSeedboxSettingsPassword(arg1:string,arg2:string):Promise<void>;
+
 export function SkipCurrentEpisode():Promise<void>;
 
 export function StartWatchFolder(arg1:string):Promise<void>;
@@ -155,7 +161,11 @@ export function TestHydracker(arg1:string,arg2:string):Promise<tester.Result>;
 
 export function TestLihdl(arg1:string,arg2:string,arg3:string):Promise<tester.Result>;
 
+export function TestModSeedbox(arg1:string,arg2:string,arg3:string):Promise<tester.Result>;
+
 export function TestOneFichier(arg1:string):Promise<tester.Result>;
+
+export function TestQBit(arg1:string,arg2:string,arg3:string):Promise<tester.Result>;
 
 export function TestSeedbox(arg1:string,arg2:string,arg3:string):Promise<tester.Result>;
 
@@ -170,3 +180,5 @@ export function UpdateMyLien(arg1:number,arg2:number,arg3:number,arg4:number,arg
 export function UpdateMyTorrent(arg1:number,arg2:number,arg3:number,arg4:number,arg5:number,arg6:number):Promise<void>;
 
 export function VerifyLihdlSettingsPassword(arg1:string):Promise<boolean>;
+
+export function VerifySeedboxSettingsPassword(arg1:string):Promise<boolean>;

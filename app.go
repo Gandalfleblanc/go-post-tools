@@ -35,6 +35,7 @@ import (
 	"github.com/anacrolix/torrent/metainfo"
 	"go-post-tools/internal/parpar"
 	"go-post-tools/internal/parser"
+	"go-post-tools/internal/qbittorrent"
 	"go-post-tools/internal/seedbox"
 	"go-post-tools/internal/tester"
 	"go-post-tools/internal/tmdb"
@@ -46,7 +47,7 @@ import (
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
-const Version = "4.0.0"
+const Version = "4.1.0"
 
 type App struct {
 	ctx         context.Context
@@ -649,6 +650,40 @@ func (a *App) ClearLihdlSettingsPassword(currentPassword string) error {
 	return config.Save(a.cfg)
 }
 
+// --- Protection des sections SEEDBOX/FTP (mdp partagé entre admins) ---
+
+func (a *App) HasSeedboxSettingsPassword() bool {
+	return a.cfg.SeedboxSettingsPasswordHash != ""
+}
+
+func (a *App) SetSeedboxSettingsPassword(currentPassword, newPassword string) error {
+	if newPassword == "" {
+		return fmt.Errorf("mot de passe vide")
+	}
+	if a.cfg.SeedboxSettingsPasswordHash != "" {
+		if hashPassword(currentPassword) != a.cfg.SeedboxSettingsPasswordHash {
+			return fmt.Errorf("mot de passe actuel incorrect")
+		}
+	}
+	a.cfg.SeedboxSettingsPasswordHash = hashPassword(newPassword)
+	return config.Save(a.cfg)
+}
+
+func (a *App) VerifySeedboxSettingsPassword(password string) bool {
+	if a.cfg.SeedboxSettingsPasswordHash == "" {
+		return true
+	}
+	return hashPassword(password) == a.cfg.SeedboxSettingsPasswordHash
+}
+
+func (a *App) ClearSeedboxSettingsPassword(currentPassword string) error {
+	if !a.VerifySeedboxSettingsPassword(currentPassword) {
+		return fmt.Errorf("mot de passe incorrect")
+	}
+	a.cfg.SeedboxSettingsPasswordHash = ""
+	return config.Save(a.cfg)
+}
+
 // recordHistory enregistre un post dans la base (best-effort, ignore les erreurs).
 func (a *App) recordHistory(e history.Entry) {
 	if a.hist == nil {
@@ -749,6 +784,14 @@ func (a *App) TestFTP(host string, port int, user, password string) tester.Resul
 
 func (a *App) TestSeedbox(url, user, password string) tester.Result {
 	return tester.TestSeedbox(url, user, password)
+}
+
+func (a *App) TestQBit(url, user, password string) tester.Result {
+	return tester.TestQBit(url, user, password)
+}
+
+func (a *App) TestModSeedbox(url, user, password string) tester.Result {
+	return tester.TestModSeedbox(url, user, password)
 }
 
 func (a *App) TestUsenet(host string, port int) tester.Result {
@@ -1075,7 +1118,7 @@ func (a *App) ReseedExecute(torrentPath, mkvPath string) error {
 
 	// 2. Upload .torrent sur ruTorrent (addtorrent.php)
 	emit("seedbox", "Ajout sur ruTorrent…")
-	if _, err := seedbox.Upload(a.workContext(), a.cfg.SeedboxURL, a.cfg.SeedboxUser, a.cfg.SeedboxPassword, a.cfg.SeedboxLabel, torrentPath, nil); err != nil {
+	if _, err := a.pushTorrent(a.workContext(), torrentPath, "admin", nil); err != nil {
 		emit("error", "seedbox: "+err.Error())
 		return err
 	}
@@ -1085,12 +1128,59 @@ func (a *App) ReseedExecute(torrentPath, mkvPath string) error {
 	if err == nil {
 		hash := mi.HashInfoBytes().HexString()
 		emit("recheck", "Re-check…")
-		// petite pause pour laisser rtorrent enregistrer le torrent
 		time.Sleep(2 * time.Second)
-		_ = rutorrent.Recheck(a.cfg.SeedboxURL, a.cfg.SeedboxUser, a.cfg.SeedboxPassword, hash)
+		_ = a.recheckTorrent(hash, "admin")
 	}
 	emit("done", "Terminé")
 	return nil
+}
+
+// --- Seedbox abstraction : choix explicite ou auto qBit vs ruTorrent ---
+//
+// seedboxType :
+//   - "admin" : force ruTorrent (Seedbox classique)
+//   - "modo"  : force qBittorrent (Seedbox Modérateur)
+//   - ""      : auto (qBit prioritaire si configuré, sinon ruTorrent)
+//
+// pushTorrent envoie un .torrent au seedbox cible. onProgress peut être nil.
+func (a *App) pushTorrent(ctx context.Context, torrentPath, seedboxType string, onProgress func(seedbox.Progress)) (string, error) {
+	useQBit := seedboxType == "modo" || (seedboxType == "" && a.cfg.QBitURL != "")
+	useRuTorrent := seedboxType == "admin" || (seedboxType == "" && a.cfg.QBitURL == "" && a.cfg.SeedboxURL != "")
+	if useQBit {
+		if a.cfg.QBitURL == "" {
+			return "", fmt.Errorf("seedbox MODO (qBittorrent) non configurée")
+		}
+		return qbittorrent.Upload(ctx, a.cfg.QBitURL, a.cfg.QBitUser, a.cfg.QBitPassword, a.cfg.SeedboxLabel, torrentPath, func(p qbittorrent.Progress) {
+			if onProgress != nil {
+				onProgress(seedbox.Progress{Percent: p.Percent, SpeedMB: p.SpeedMB})
+			}
+		})
+	}
+	if useRuTorrent {
+		if a.cfg.SeedboxURL == "" {
+			return "", fmt.Errorf("seedbox ADMIN (ruTorrent) non configurée")
+		}
+		return seedbox.Upload(ctx, a.cfg.SeedboxURL, a.cfg.SeedboxUser, a.cfg.SeedboxPassword, a.cfg.SeedboxLabel, torrentPath, onProgress)
+	}
+	return "", fmt.Errorf("aucune seedbox configurée (Réglages : ruTorrent ou qBittorrent)")
+}
+
+// recheckTorrent force un recheck côté seedbox cible.
+func (a *App) recheckTorrent(hash, seedboxType string) error {
+	useQBit := seedboxType == "modo" || (seedboxType == "" && a.cfg.QBitURL != "")
+	useRuTorrent := seedboxType == "admin" || (seedboxType == "" && a.cfg.QBitURL == "" && a.cfg.SeedboxURL != "")
+	if useQBit && a.cfg.QBitURL != "" {
+		return qbittorrent.Recheck(a.cfg.QBitURL, a.cfg.QBitUser, a.cfg.QBitPassword, hash)
+	}
+	if useRuTorrent && a.cfg.SeedboxURL != "" {
+		return rutorrent.Recheck(a.cfg.SeedboxURL, a.cfg.SeedboxUser, a.cfg.SeedboxPassword, hash)
+	}
+	return fmt.Errorf("seedbox %q non configurée", seedboxType)
+}
+
+// seedboxConfigured indique si au moins une seedbox (ruTorrent ou qBit) est configurée.
+func (a *App) seedboxConfigured() bool {
+	return a.cfg.QBitURL != "" || a.cfg.SeedboxURL != ""
 }
 
 func (a *App) SelectAnyTorrentFile() (string, error) {
@@ -1205,8 +1295,8 @@ func (a *App) ReseedFromLihdl(hash, lihdlURL, remoteName string) error {
 		return err
 	}
 
-	emit("recheck", "Re-check ruTorrent…")
-	if err := rutorrent.Recheck(a.cfg.SeedboxURL, a.cfg.SeedboxUser, a.cfg.SeedboxPassword, hash); err != nil {
+	emit("recheck", "Re-check seedbox…")
+	if err := a.recheckTorrent(hash, "admin"); err != nil {
 		emit("error", "recheck: "+err.Error())
 		return err
 	}
@@ -1577,7 +1667,7 @@ func (a *App) AutoReseedFromHydracker(titleID, saison, episode, preferQuality, p
 
 	// 5. Push sur seedbox
 	emit("seedbox", "Upload sur seedbox…")
-	seedPath, err := seedbox.Upload(a.workContext(), a.cfg.SeedboxURL, a.cfg.SeedboxUser, a.cfg.SeedboxPassword, a.cfg.SeedboxLabel, tmpPath, func(p seedbox.Progress) {
+	seedPath, err := a.pushTorrent(a.workContext(), tmpPath, "", func(p seedbox.Progress) {
 		wailsruntime.EventsEmit(a.ctx, "autoreseed:progress", p)
 	})
 	if err != nil {
@@ -1932,7 +2022,7 @@ func (a *App) AutoReseedFullFromTorrent(torrentID, titleID, saison, episode int)
 
 	// 6. Push .torrent à ruTorrent
 	emit("seedbox", "Ajout du .torrent sur ruTorrent…")
-	seedPath, err := seedbox.Upload(a.workContext(), a.cfg.SeedboxURL, a.cfg.SeedboxUser, a.cfg.SeedboxPassword, a.cfg.SeedboxLabel, tmpTorPath, func(p seedbox.Progress) {
+	seedPath, err := a.pushTorrent(a.workContext(), tmpTorPath, "", func(p seedbox.Progress) {
 		wailsruntime.EventsEmit(a.ctx, "autoreseed_full:seedbox", p)
 	})
 	if err != nil {
@@ -1943,7 +2033,7 @@ func (a *App) AutoReseedFullFromTorrent(torrentID, titleID, saison, episode int)
 	emit("recheck", "Force recheck…")
 	time.Sleep(2 * time.Second)
 	rechecked := true
-	if err := rutorrent.Recheck(a.cfg.SeedboxURL, a.cfg.SeedboxUser, a.cfg.SeedboxPassword, infoHash); err != nil {
+	if err := a.recheckTorrent(infoHash, ""); err != nil {
 		emit("recheck_warn", fmt.Sprintf("recheck auto échoué (%v) — à faire manuellement si besoin", err))
 		rechecked = false
 	}
@@ -2033,7 +2123,9 @@ func (a *App) PostExistingTorrent(titleID, qualite int, langues, subs []string, 
 	}, nil
 }
 
-func (a *App) PostTorrentWorkflow(titleID, qualite int, langues, subs []string, mkvPath, nfo string, saison, episode int) (*TorrentWorkflowResult, error) {
+// PostTorrentWorkflow : post complet torrent.
+// seedboxType : "admin" (ruTorrent) | "modo" (qBit) | "" (auto : qBit si configuré sinon ruTorrent).
+func (a *App) PostTorrentWorkflow(titleID, qualite int, langues, subs []string, mkvPath, nfo string, saison, episode int, seedboxType string) (*TorrentWorkflowResult, error) {
 	a.resetCancellation()
 	if strings.TrimSpace(mkvPath) == "" {
 		return nil, fmt.Errorf("chemin MKV manquant")
@@ -2056,9 +2148,22 @@ func (a *App) PostTorrentWorkflow(titleID, qualite int, langues, subs []string, 
 		wailsruntime.EventsEmit(a.ctx, "torrent:status", map[string]interface{}{"stage": stage, "msg": msg})
 	}
 
-	// 1. Upload MKV sur FTP
-	emit("ftp", "Upload FTP…")
-	remoteName, err := ftpup.Upload(a.workContext(), a.cfg.FTPHost, a.cfg.FTPPort, a.cfg.FTPUser, a.cfg.FTPPassword, a.cfg.FTPPath, mkvPath, func(p ftpup.Progress) {
+	// 1. Upload MKV vers la seedbox cible via FTP
+	//    - MODO  → FTP MODÉRATEUR (cfg.FTPMod*) — seedbox partagée des modos
+	//    - ADMIN → FTP RUTORRENT (cfg.FTP*) — ta seedbox perso
+	var ftpHost, ftpUser, ftpPass, ftpPath string
+	var ftpPort int
+	if seedboxType == "modo" {
+		if a.cfg.FTPModHost == "" {
+			return nil, fmt.Errorf("FTP Modérateur non configuré (Réglages)")
+		}
+		ftpHost, ftpPort, ftpUser, ftpPass, ftpPath = a.cfg.FTPModHost, a.cfg.FTPModPort, a.cfg.FTPModUser, a.cfg.FTPModPassword, a.cfg.FTPModPath
+		emit("ftp", "Upload FTP Modérateur…")
+	} else {
+		ftpHost, ftpPort, ftpUser, ftpPass, ftpPath = a.cfg.FTPHost, a.cfg.FTPPort, a.cfg.FTPUser, a.cfg.FTPPassword, a.cfg.FTPPath
+		emit("ftp", "Upload FTP…")
+	}
+	remoteName, err := ftpup.Upload(a.workContext(), ftpHost, ftpPort, ftpUser, ftpPass, ftpPath, mkvPath, func(p ftpup.Progress) {
 		wailsruntime.EventsEmit(a.ctx, "torrent:ftp", p)
 	})
 	if err != nil {
@@ -2111,7 +2216,7 @@ func (a *App) PostTorrentWorkflow(titleID, qualite int, langues, subs []string, 
 	if sourceForSeedbox == "" {
 		sourceForSeedbox = torrentPath
 	}
-	seedPath, err := seedbox.Upload(a.workContext(), a.cfg.SeedboxURL, a.cfg.SeedboxUser, a.cfg.SeedboxPassword, a.cfg.SeedboxLabel, sourceForSeedbox, func(p seedbox.Progress) {
+	seedPath, err := a.pushTorrent(a.workContext(), sourceForSeedbox, seedboxType, func(p seedbox.Progress) {
 		wailsruntime.EventsEmit(a.ctx, "torrent:seedbox", p)
 	})
 	if err != nil {
@@ -2119,13 +2224,13 @@ func (a *App) PostTorrentWorkflow(titleID, qualite int, langues, subs []string, 
 	}
 	emit("seedbox_done", fmt.Sprintf("Seedbox OK : %s", seedPath))
 
-	// Force re-check : le torrent vient d'être ajouté, on force rtorrent à
-	// vérifier le hash du MKV déjà sur la seedbox (évite un téléchargement inutile).
+	// Force re-check : le torrent vient d'être ajouté, on force la seedbox
+	// (ruTorrent ou qBit selon config) à vérifier le hash du MKV déjà en place.
 	if mi, err := metainfo.LoadFromFile(sourceForSeedbox); err == nil {
 		hash := mi.HashInfoBytes().HexString()
-		emit("recheck", "Force re-check ruTorrent…")
+		emit("recheck", "Force re-check seedbox…")
 		time.Sleep(2 * time.Second)
-		if err := rutorrent.Recheck(a.cfg.SeedboxURL, a.cfg.SeedboxUser, a.cfg.SeedboxPassword, hash); err != nil {
+		if err := a.recheckTorrent(hash, seedboxType); err != nil {
 			emit("recheck_warn", "recheck échoué : "+err.Error())
 		} else {
 			emit("recheck_done", "Re-check OK")

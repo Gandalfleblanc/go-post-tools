@@ -46,6 +46,31 @@ type Config struct {
 	SeedboxPassword string `json:"seedbox_password"`
 	SeedboxLabel    string `json:"seedbox_label"`    // label optionnel ajouté au torrent
 
+	// Seedbox qBittorrent Web UI (alternative à ruTorrent pour les modérateurs
+	// qui utilisent qBit). URL + login/password.
+	QBitURL      string `json:"qbit_url"`
+	QBitUser     string `json:"qbit_user"`
+	QBitPassword string `json:"qbit_password"`
+
+	// Seedbox modérateur — site web avec login/password où les modérateurs
+	// uploadent leurs fichiers, qui sont ensuite synchronisés avec la seedbox.
+	ModSeedboxURL      string `json:"mod_seedbox_url"`
+	ModSeedboxUser     string `json:"mod_seedbox_user"`
+	ModSeedboxPassword string `json:"mod_seedbox_password"`
+
+	// FTP modérateur (ex: seedbox.fr bloque WebDAV chunked → FTP est la
+	// méthode standard pour les gros fichiers).
+	FTPModHost     string `json:"ftp_mod_host"`
+	FTPModPort     int    `json:"ftp_mod_port"`
+	FTPModUser     string `json:"ftp_mod_user"`
+	FTPModPassword string `json:"ftp_mod_password"`
+	FTPModPath     string `json:"ftp_mod_path"`
+
+	// Hash sha256 du mot de passe qui protège les 4 sections seedbox/FTP
+	// (FTP RUTORRENT, FTP MODÉRATEUR, Seedbox ruTorrent, Seedbox qBit).
+	// Mutualisé pour 1 mdp partagé entre admins.
+	SeedboxSettingsPasswordHash string `json:"seedbox_settings_password_hash"`
+
 	// Torrent creation
 	TrackerURL       string `json:"tracker_url"`
 	TorrentPieceSize int    `json:"torrent_piece_size"` // en octets
