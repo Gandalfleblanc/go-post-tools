@@ -49,7 +49,7 @@ import (
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
-const Version = "4.5.2"
+const Version = "4.5.3"
 
 type App struct {
 	ctx         context.Context
@@ -2500,29 +2500,58 @@ func (a *App) AutoReseedFullFromTorrent(torrentID, titleID, saison, episode int)
 	if len(liensResp.Liens) == 0 {
 		return nil, fmt.Errorf("aucun DDL dispo sur la fiche #%d", titleID)
 	}
-	bestLien := pickBestLien(liensResp.Liens, 0, 0)
-	if bestLien == nil {
-		return nil, fmt.Errorf("aucun DDL sélectionnable")
-	}
-	emit("ddl_picked", fmt.Sprintf("DDL choisi : #%d host=%s", bestLien.ID, bestLien.HostName()))
 
-	// 4. Récupère URL partage réelle + 1fichier get_token
-	lienData, err := a.client.GetLienByID(bestLien.ID)
-	if err != nil {
-		return nil, fmt.Errorf("get lien #%d : %w", bestLien.ID, err)
+	// 4. Itère les DDL 1fichier dans l'ordre de préférence. Si le premier
+	//    est mort ("Resource not found"), passe au suivant. Fail uniquement
+	//    si tous les candidats échouent.
+	//    On filtre + trie : 1fichier prioritaire, qualité décroissante.
+	candidates := []api.Lien{}
+	for _, l := range liensResp.Liens {
+		host := strings.ToLower(l.HostName())
+		if strings.Contains(host, "1fichier") || l.IDHost == 5 {
+			candidates = append(candidates, l)
+		}
 	}
-	if lienData == nil || lienData.URL == "" {
-		return nil, fmt.Errorf("lien manquant pour DDL #%d", bestLien.ID)
+	// Top-1 via pickBestLien en tête, puis le reste
+	if top := pickBestLien(liensResp.Liens, 0, 0); top != nil {
+		// Mets le meilleur en tête, retire-le du reste
+		reordered := []api.Lien{*top}
+		for _, l := range candidates {
+			if l.ID != top.ID {
+				reordered = append(reordered, l)
+			}
+		}
+		candidates = reordered
 	}
-	shareURL := lienData.URL
-	host := strings.ToLower(lienData.HostName())
-	if !strings.Contains(host, "1fichier") && !strings.Contains(shareURL, "1fichier.com") {
-		return nil, fmt.Errorf("host %s non supporté en auto (seul 1fichier l'est pour l'instant)", lienData.HostName())
+	if len(candidates) == 0 {
+		return nil, fmt.Errorf("aucun DDL 1fichier sur la fiche #%d", titleID)
 	}
-	emit("token", "Obtention URL directe 1fichier…")
-	directURL, err := downloader.OneFichierGetToken(a.workContext(), a.cfg.OneFichierApiKey, shareURL)
-	if err != nil {
-		return nil, fmt.Errorf("1fichier token : %w", err)
+
+	var directURL string
+	var pickedLien api.Lien
+	var pickedHost string
+	var tokenErrors []string
+	for _, candidate := range candidates {
+		emit("ddl_picked", fmt.Sprintf("DDL essayé : #%d", candidate.ID))
+		lienData, err := a.client.GetLienByID(candidate.ID)
+		if err != nil || lienData == nil || lienData.URL == "" {
+			tokenErrors = append(tokenErrors, fmt.Sprintf("#%d get: %v", candidate.ID, err))
+			continue
+		}
+		emit("token", fmt.Sprintf("Obtention URL directe #%d…", candidate.ID))
+		d, terr := downloader.OneFichierGetToken(a.workContext(), a.cfg.OneFichierApiKey, lienData.URL)
+		if terr != nil {
+			tokenErrors = append(tokenErrors, fmt.Sprintf("#%d: %v", candidate.ID, terr))
+			emit("ddl_skip", fmt.Sprintf("#%d mort (%v) — passe au suivant", candidate.ID, terr))
+			continue
+		}
+		directURL = d
+		pickedLien = candidate
+		pickedHost = lienData.HostName()
+		break
+	}
+	if directURL == "" {
+		return nil, fmt.Errorf("aucun DDL 1fichier valide (%d testés) : %s", len(candidates), strings.Join(tokenErrors, " · "))
 	}
 
 	// 5. Stream download → FTP avec le nom EXACT du torrent
@@ -2569,8 +2598,8 @@ func (a *App) AutoReseedFullFromTorrent(torrentID, titleID, saison, episode int)
 		TorrentID:        torrentID,
 		TorrentName:      info.Name,
 		ExpectedFilename: expectedFilename,
-		MatchedLienID:    bestLien.ID,
-		MatchedHost:      lienData.HostName(),
+		MatchedLienID:    pickedLien.ID,
+		MatchedHost:      pickedHost,
 		SizeBytes:        totalSize,
 		InfoHash:         infoHash,
 		SeedboxPath:      seedPath,

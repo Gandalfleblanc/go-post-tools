@@ -27,6 +27,7 @@
     hydracker_token: '',
     tmdb_api_key: '',
     tmdb_proxy_url: 'https://tmdb.uklm.xyz',
+    lihdl_base_url: '',
     one_fichier_api_key: '',
     sendcm_api_key: '',
     nexum_api_key: '',
@@ -2374,6 +2375,11 @@
               <label>Index de recherche LiHDL (par nom de fichier)</label>
               <input type="password" value={cfg.media_search_url} disabled readonly />
               <div class="field-hint">Endpoint custom imposé par la team — non modifiable.</div>
+            </div>
+            <div class="field">
+              <label>Index de recherche TEAM</label>
+              <input type="password" value={cfg.lihdl_base_url} disabled readonly />
+              <div class="field-hint">Dossier LiHDL team-shared — verrouillé par la team.</div>
             </div>
             <div class="field">
               <label>Clé API TMDB (fallback)</label>

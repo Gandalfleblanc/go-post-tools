@@ -186,6 +186,9 @@ var (
 	DefaultTMDBProxyURL   = ""
 	DefaultMediaSearchURL = ""
 	DefaultTMDBApiKey     = ""
+
+	// Index de recherche TEAM (dossier LiHDL team-shared, baké au build)
+	DefaultLihdlBaseURL = ""
 )
 
 func Load() *Config {
@@ -236,6 +239,7 @@ func Load() *Config {
 	override(&cfg.TMDBProxyURL, DefaultTMDBProxyURL)
 	override(&cfg.MediaSearchURL, DefaultMediaSearchURL)
 	override(&cfg.TMDBApiKey, DefaultTMDBApiKey)
+	override(&cfg.LihdlBaseURL, DefaultLihdlBaseURL)
 	return cfg
 }
 

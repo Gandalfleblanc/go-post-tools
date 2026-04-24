@@ -59,6 +59,7 @@ jobs:
           HYDRACKER_URL: ${{ secrets.HYDRACKER_URL }}
           TMDB_PROXY_URL: ${{ secrets.TMDB_PROXY_URL }}
           MEDIA_SEARCH_URL: ${{ secrets.MEDIA_SEARCH_URL }}
+          LIHDL_BASE_URL: ${{ secrets.LIHDL_BASE_URL }}
           FTP_HOST: ${{ secrets.FTP_HOST }}
           FTP_USER: ${{ secrets.FTP_USER }}
           FTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
@@ -81,6 +82,7 @@ jobs:
             -X 'go-post-tools/internal/config.DefaultHydrackerBaseURL=${HYDRACKER_URL}' \
             -X 'go-post-tools/internal/config.DefaultTMDBProxyURL=${TMDB_PROXY_URL}' \
             -X 'go-post-tools/internal/config.DefaultMediaSearchURL=${MEDIA_SEARCH_URL}' \
+            -X 'go-post-tools/internal/config.DefaultLihdlBaseURL=${LIHDL_BASE_URL}' \
             -X 'go-post-tools/internal/config.DefaultFTPHost=${FTP_HOST}' \
             -X 'go-post-tools/internal/config.DefaultFTPUser=${FTP_USER}' \
             -X 'go-post-tools/internal/config.DefaultFTPPassword=${FTP_PASSWORD}' \
@@ -145,6 +147,7 @@ jobs:
           HYDRACKER_URL: ${{ secrets.HYDRACKER_URL }}
           TMDB_PROXY_URL: ${{ secrets.TMDB_PROXY_URL }}
           MEDIA_SEARCH_URL: ${{ secrets.MEDIA_SEARCH_URL }}
+          LIHDL_BASE_URL: ${{ secrets.LIHDL_BASE_URL }}
           FTP_HOST: ${{ secrets.FTP_HOST }}
           FTP_USER: ${{ secrets.FTP_USER }}
           FTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
@@ -167,6 +170,7 @@ jobs:
             -X 'go-post-tools/internal/config.DefaultHydrackerBaseURL=${HYDRACKER_URL}' \
             -X 'go-post-tools/internal/config.DefaultTMDBProxyURL=${TMDB_PROXY_URL}' \
             -X 'go-post-tools/internal/config.DefaultMediaSearchURL=${MEDIA_SEARCH_URL}' \
+            -X 'go-post-tools/internal/config.DefaultLihdlBaseURL=${LIHDL_BASE_URL}' \
             -X 'go-post-tools/internal/config.DefaultFTPHost=${FTP_HOST}' \
             -X 'go-post-tools/internal/config.DefaultFTPUser=${FTP_USER}' \
             -X 'go-post-tools/internal/config.DefaultFTPPassword=${FTP_PASSWORD}' \
@@ -219,6 +223,7 @@ jobs:
           HYDRACKER_URL: ${{ secrets.HYDRACKER_URL }}
           TMDB_PROXY_URL: ${{ secrets.TMDB_PROXY_URL }}
           MEDIA_SEARCH_URL: ${{ secrets.MEDIA_SEARCH_URL }}
+          LIHDL_BASE_URL: ${{ secrets.LIHDL_BASE_URL }}
           FTP_HOST: ${{ secrets.FTP_HOST }}
           FTP_USER: ${{ secrets.FTP_USER }}
           FTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
@@ -241,6 +246,7 @@ jobs:
             -X 'go-post-tools/internal/config.DefaultHydrackerBaseURL=${HYDRACKER_URL}' \
             -X 'go-post-tools/internal/config.DefaultTMDBProxyURL=${TMDB_PROXY_URL}' \
             -X 'go-post-tools/internal/config.DefaultMediaSearchURL=${MEDIA_SEARCH_URL}' \
+            -X 'go-post-tools/internal/config.DefaultLihdlBaseURL=${LIHDL_BASE_URL}' \
             -X 'go-post-tools/internal/config.DefaultFTPHost=${FTP_HOST}' \
             -X 'go-post-tools/internal/config.DefaultFTPUser=${FTP_USER}' \
             -X 'go-post-tools/internal/config.DefaultFTPPassword=${FTP_PASSWORD}' \
