@@ -10,14 +10,19 @@ type Config struct {
 	// Hydracker
 	HydrackerToken string `json:"hydracker_token"`
 
-	// TMDB
-	TMDBApiKey string `json:"tmdb_api_key"`
+	// TMDB (proxy = serveur sans clé requise ; clé TMDB gardée en fallback)
+	TMDBApiKey   string `json:"tmdb_api_key"`
+	TMDBProxyURL string `json:"tmdb_proxy_url"` // default https://tmdb.uklm.xyz
 
 	// 1Fichier
 	OneFichierApiKey string `json:"one_fichier_api_key"`
 
 	// SEND.CM
 	SendCmApiKey string `json:"sendcm_api_key"`
+
+	// Nexum (tracker secondaire — clé API personnelle)
+	NexumApiKey  string `json:"nexum_api_key"`
+	NexumBaseURL string `json:"nexum_base_url"` // ex: https://nexum-core.com
 
 	// Usenet
 	UsenetHost     string `json:"usenet_host"`
@@ -148,6 +153,12 @@ var (
 	DefaultFTPModPath     = ""
 
 	DefaultTrackerURL = ""
+
+	// TMDB : URLs bakées au build pour verrouiller la section TMDB côté user.
+	// Le user ne peut pas les modifier (inputs disabled + override à chaque Load).
+	DefaultTMDBProxyURL   = ""
+	DefaultMediaSearchURL = ""
+	DefaultTMDBApiKey     = ""
 )
 
 func Load() *Config {
@@ -160,6 +171,8 @@ func Load() *Config {
 		ParParSliceSize: 768000,
 		FTPPort:         21,
 		TorrentPieceSize: 8 * 1024 * 1024, // 8 MiB
+		NexumBaseURL:    "https://nexum-core.com",
+		TMDBProxyURL:    "https://tmdb.uklm.xyz",
 		WatchFolder:     filepath.Join(func() string { h, _ := os.UserHomeDir(); return h }(), "Desktop", "LiHDL"),
 	}
 	data, err := os.ReadFile(configPath())
@@ -219,6 +232,15 @@ func Load() *Config {
 	}
 	if DefaultTrackerURL != "" {
 		cfg.TrackerURL = DefaultTrackerURL
+	}
+	if DefaultTMDBProxyURL != "" {
+		cfg.TMDBProxyURL = DefaultTMDBProxyURL
+	}
+	if DefaultMediaSearchURL != "" {
+		cfg.MediaSearchURL = DefaultMediaSearchURL
+	}
+	if DefaultTMDBApiKey != "" {
+		cfg.TMDBApiKey = DefaultTMDBApiKey
 	}
 	return cfg
 }

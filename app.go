@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"os/exec"
 	"runtime"
+	"sort"
 	"time"
 
 	"os"
@@ -28,6 +29,7 @@ import (
 	"go-post-tools/internal/ftpup"
 	"go-post-tools/internal/history"
 	"go-post-tools/internal/lihdl"
+	"go-post-tools/internal/nexum"
 	"go-post-tools/internal/nyuu"
 	"go-post-tools/internal/rutorrent"
 	"go-post-tools/internal/mediasearch"
@@ -47,7 +49,7 @@ import (
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
-const Version = "4.3.0"
+const Version = "4.4.0"
 
 type App struct {
 	ctx         context.Context
@@ -690,7 +692,17 @@ func (a *App) VerifySeedboxSettingsPassword(password string) bool {
 	if h == "" {
 		return true
 	}
-	return hashPassword(password) == h
+	if hashPassword(password) == h {
+		// Vérification OK → l'user est admin. On persiste le flag pour que
+		// l'option Torrent ADMIN s'affiche dans HydrackerTab sans demander
+		// de mdp à nouveau (un admin reste admin pour toujours).
+		if !a.cfg.TorrentAdminAcknowledged {
+			a.cfg.TorrentAdminAcknowledged = true
+			_ = config.Save(a.cfg)
+		}
+		return true
+	}
+	return false
 }
 
 func (a *App) ClearSeedboxSettingsPassword(currentPassword string) error {
@@ -833,14 +845,29 @@ func (a *App) TestUsenet(host string, port int) tester.Result {
 	return tester.TestUsenet(host, port)
 }
 
-// --- TMDB ---
+// --- TMDB (via proxytmdb configurable, default https://tmdb.uklm.xyz) ---
+
+// tmdbClient retourne un client TMDB qui respecte la config user (proxy URL).
+func (a *App) tmdbClient() *tmdb.Client {
+	return tmdb.NewClientWithBase(a.cfg.TMDBProxyURL)
+}
 
 func (a *App) TMDBSearch(query string) ([]tmdb.Movie, error) {
-	return tmdb.NewClient(a.cfg.TMDBApiKey).Search(query)
+	return a.tmdbClient().Search(query)
 }
 
 func (a *App) TMDBGetByID(id int, mediaType string) (*tmdb.Movie, error) {
-	return tmdb.NewClient(a.cfg.TMDBApiKey).GetByID(id, mediaType)
+	return a.tmdbClient().GetByID(id, mediaType)
+}
+
+// TMDBGetByImdbID : lookup direct via IMDb ID (ex: "tt0120855"). Bonus du proxy.
+func (a *App) TMDBGetByImdbID(imdbID string) (*tmdb.Movie, error) {
+	return a.tmdbClient().GetByImdbID(imdbID)
+}
+
+// TMDBGetProviders : liste les plateformes streaming par pays pour un titre.
+func (a *App) TMDBGetProviders(tmdbID int, mediaType string) (map[string]tmdb.CountryProviders, error) {
+	return a.tmdbClient().GetProviders(tmdbID, mediaType)
 }
 
 // --- Image proxy (contourne les restrictions CSP de Wails) ---
@@ -1135,6 +1162,169 @@ func (a *App) FicheGetContent(titleID int) (*FicheContent, error) {
 func (a *App) FicheGetNfo(kind string, id int) (string, error) {
 	a.resetCancellation()
 	return a.client.GetNfo(kind, id)
+}
+
+// UploaderRow agrège l'activité d'un uploader sur la fenêtre de scan.
+type UploaderRow struct {
+	Author       string `json:"author"`
+	Torrents     int    `json:"torrents"`
+	Nzbs         int    `json:"nzbs"`
+	Liens        int    `json:"liens"`
+	Total        int    `json:"total"`
+	TotalSize    int64  `json:"total_size"`
+	LastUploadAt string `json:"last_upload_at"`
+}
+
+type UploaderScanResult struct {
+	Uploaders     []UploaderRow `json:"uploaders"`
+	ScannedTitles int           `json:"scanned_titles"`
+	ScannedItems  struct {
+		Torrents int `json:"torrents"`
+		Nzbs     int `json:"nzbs"`
+		Liens    int `json:"liens"`
+	} `json:"scanned_items"`
+	OldestScanned string `json:"oldest_scanned"` // date de la plus ancienne fiche scannée
+	NewestScanned string `json:"newest_scanned"`
+	DurationSec   int    `json:"duration_sec"`
+}
+
+// GetTopUploaders construit un classement site-wide en :
+//   1. Listant les N fiches les plus populaires (`/titles?order=popularity:desc`)
+//   2. Pour chaque fiche, fetchant ses torrents/nzbs/liens via les endpoints
+//      documentés `/titles/{id}/content/{type}` (qui exposent l'auteur)
+//   3. Agrégeant par uploader, retournant top topN par type
+// Coût : 1 + 3*scanTitles requêtes, sérialisées par le rate limit (1 req/s).
+// Avec scanTitles=30 → ~91 req → ~95 secondes.
+func (a *App) GetUploaderStats(daysSince int) (*UploaderScanResult, error) {
+	if daysSince <= 0 {
+		daysSince = 30
+	}
+	startTime := time.Now()
+	cutoff := time.Now().UTC().AddDate(0, 0, -daysSince).Format(time.RFC3339)
+	result := &UploaderScanResult{}
+
+	uploaders := map[string]*UploaderRow{}
+	getOrCreate := func(name string) *UploaderRow {
+		if u, ok := uploaders[name]; ok {
+			return u
+		}
+		u := &UploaderRow{Author: name}
+		uploaders[name] = u
+		return u
+	}
+	updateLast := func(u *UploaderRow, ts string) {
+		if ts > u.LastUploadAt {
+			u.LastUploadAt = ts
+		}
+	}
+
+	// 1) TORRENTS : endpoint global /torrents (perPage=100, sorted desc).
+	//    On paginate jusqu'à hit créé avant le cutoff.
+	page := 1
+	for {
+		r, err := a.client.GetGlobalTorrents(page, 100)
+		if err != nil || len(r.Pagination.Data) == 0 {
+			break
+		}
+		stop := false
+		for _, item := range r.Pagination.Data {
+			if item.CreatedAt < cutoff {
+				stop = true
+				continue
+			}
+			if item.Author == "" {
+				continue
+			}
+			u := getOrCreate(item.Author)
+			u.Torrents++
+			u.Total++
+			u.TotalSize += item.Size
+			updateLast(u, item.CreatedAt)
+			result.ScannedItems.Torrents++
+		}
+		if stop {
+			break
+		}
+		page++
+		if page > 200 {
+			break
+		} // safety
+	}
+
+	// 2) FICHES actives dans la fenêtre : on liste /titles ordonné par
+	//    last_content_added_at desc, et pour chacune on fetch ses NZB et DDL.
+	titlePage := 1
+	for {
+		titles, err := a.client.GetTitles(api.TitleFilter{Order: "last_content_added_at:desc", PerPage: 100, Page: titlePage})
+		if err != nil || len(titles.Data) == 0 {
+			break
+		}
+		stop := false
+		for _, t := range titles.Data {
+			if t.LastContentAddedAt < cutoff {
+				stop = true
+				break
+			}
+			result.ScannedTitles++
+			if result.NewestScanned == "" {
+				result.NewestScanned = t.LastContentAddedAt
+			}
+			result.OldestScanned = t.LastContentAddedAt
+
+			if r, err := a.client.GetNzbs(t.ID, api.ContentFilter{}); err == nil {
+				for _, item := range r.Nzbs {
+					if item.CreatedAt < cutoff {
+						continue
+					}
+					name := item.Author
+					if name == "" {
+						name = item.IDUser
+					}
+					if name == "" {
+						continue
+					}
+					u := getOrCreate(name)
+					u.Nzbs++
+					u.Total++
+					u.TotalSize += item.Size
+					updateLast(u, item.CreatedAt)
+					result.ScannedItems.Nzbs++
+				}
+			}
+			if r, err := a.client.GetLiens(t.ID, api.ContentFilter{}); err == nil {
+				for _, item := range r.Liens {
+					if item.CreatedAt < cutoff {
+						continue
+					}
+					if item.IDUser == "" {
+						continue
+					}
+					u := getOrCreate(item.IDUser)
+					u.Liens++
+					u.Total++
+					u.TotalSize += item.Size
+					updateLast(u, item.CreatedAt)
+					result.ScannedItems.Liens++
+				}
+			}
+		}
+		if stop {
+			break
+		}
+		titlePage++
+		if titlePage > 50 {
+			break
+		} // safety
+	}
+
+	rows := make([]UploaderRow, 0, len(uploaders))
+	for _, u := range uploaders {
+		rows = append(rows, *u)
+	}
+	sort.Slice(rows, func(i, j int) bool { return rows[i].Total > rows[j].Total })
+	result.Uploaders = rows
+	result.DurationSec = int(time.Since(startTime).Seconds())
+	return result, nil
 }
 
 // GetDDLFilename résout le nom de fichier réel derrière une URL DDL (1fichier
@@ -1556,6 +1746,213 @@ func (a *App) DeleteMyTorrent(id int) error {
 func (a *App) DeleteMyNzb(id int) error {
 	a.resetCancellation()
 	return a.client.DeleteNzb(id)
+}
+
+// NexumIndexEntry : un torrent Nexum + ses clés de lookup.
+type NexumIndexEntry struct {
+	nexum.Torrent
+}
+
+// NexumIndex : map clé → torrent Nexum. Les clés incluent :
+//  - info_hash lowercase (rarement utile : les 2 trackers recalculent le hash
+//    différemment car ils remplacent le tracker + forcent private=1)
+//  - nom normalisé (lowercase, sans espaces/points/underscores) → match robuste
+type NexumIndex map[string]nexum.Torrent
+
+// normalizeName : strip . _ - espaces et lower → compare robuste entre
+// "Movie.2024.1080p-TEAM" et "Movie 2024 1080p-TEAM" etc.
+func normalizeName(s string) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(s) {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+// GetNexumIndex : retourne tous les torrents Nexum indexés à la fois par
+// info_hash ET par nom normalisé pour matcher malgré le recalcul de hash.
+func (a *App) GetNexumIndex() (NexumIndex, error) {
+	if a.cfg.NexumApiKey == "" {
+		return nil, fmt.Errorf("clé API Nexum manquante")
+	}
+	c := nexum.NewClient(a.cfg.NexumApiKey, a.cfg.NexumBaseURL)
+	torrents, err := c.ListAll()
+	if err != nil {
+		return nil, err
+	}
+	idx := make(NexumIndex, len(torrents)*2)
+	for _, t := range torrents {
+		if t.InfoHash != "" {
+			idx["h:"+strings.ToLower(t.InfoHash)] = t
+		}
+		if t.Name != "" {
+			idx["n:"+normalizeName(t.Name)] = t
+		}
+	}
+	return idx, nil
+}
+
+// TestNexum : ping /api/v1/me pour vérifier que la clé est valide.
+func (a *App) TestNexum() (string, error) {
+	if a.cfg.NexumApiKey == "" {
+		return "", fmt.Errorf("clé API Nexum manquante")
+	}
+	c := nexum.NewClient(a.cfg.NexumApiKey, a.cfg.NexumBaseURL)
+	info, err := c.Me()
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("✓ %s (%s) — ratio %.2f", info.Username, info.Role, info.Ratio), nil
+}
+
+// ListSeedboxHashes : retourne tous les info_hash (lowercase) que l'user
+// a actuellement sur sa seedbox. Tente ruTorrent d'abord, qBit ensuite.
+// Utilisé par Check Torrent pour ne montrer que les torrents que l'user
+// a réellement encore en seed (filtre la liste Hydracker).
+func (a *App) ListSeedboxHashes() ([]string, error) {
+	// 1. ruTorrent (admin)
+	if a.cfg.SeedboxURL != "" {
+		torrents, err := rutorrent.List(a.cfg.SeedboxURL, a.cfg.SeedboxUser, a.cfg.SeedboxPassword)
+		if err == nil {
+			out := make([]string, 0, len(torrents))
+			for _, t := range torrents {
+				if t.Hash != "" {
+					out = append(out, strings.ToLower(t.Hash))
+				}
+			}
+			return out, nil
+		}
+	}
+	// 2. qBit (modo)
+	if a.cfg.QBitURL != "" {
+		hashes, err := qbittorrent.ListHashes(a.cfg.QBitURL, a.cfg.QBitUser, a.cfg.QBitPassword)
+		if err == nil {
+			return hashes, nil
+		}
+	}
+	return nil, fmt.Errorf("aucune seedbox configurée (ruTorrent ou qBit)")
+}
+
+// DeleteTorrentResult — résultat de DeleteTorrentAndFTP, détail par étape.
+type DeleteTorrentResult struct {
+	HydrackerOK     bool     `json:"hydracker_ok"`
+	HydrackerErr    string   `json:"hydracker_err,omitempty"`
+	SeedboxOK       bool     `json:"seedbox_ok"`
+	SeedboxErr      string   `json:"seedbox_err,omitempty"`
+	UsedSeedbox     string   `json:"used_seedbox"` // "rutorrent" | "qbit" | ""
+	FTPDeleted      []string `json:"ftp_deleted"`
+	FTPErrors       []string `json:"ftp_errors"`
+	FilesAttempted  []string `json:"files_attempted"`
+	UsedFTP         string   `json:"used_ftp"` // "perso", "mod" ou "" si rien trouvé
+}
+
+// DeleteTorrentAndFTP : suppression complète d'un torrent.
+//   1. Récupère le .torrent via /torrents/{id}/download (Bearer auth)
+//   2. Parse metainfo pour extraire la liste des fichiers
+//   3. Tente DELE sur le FTP perso, puis sur le FTP mod si échec
+//   4. DELETE /torrents/{id} sur Hydracker
+// Idempotent : un fichier déjà absent (550) est traité comme succès.
+func (a *App) DeleteTorrentAndFTP(torrentID int) (*DeleteTorrentResult, error) {
+	result := &DeleteTorrentResult{FTPDeleted: []string{}, FTPErrors: []string{}, FilesAttempted: []string{}}
+
+	// 1. Récupère le .torrent
+	torrentURL := fmt.Sprintf("%s/torrents/%d/download", a.client.BaseURL(), torrentID)
+	req, _ := http.NewRequest("GET", torrentURL, nil)
+	if a.cfg.HydrackerToken != "" {
+		req.Header.Set("Authorization", "Bearer "+a.cfg.HydrackerToken)
+	}
+	req.Header.Set("User-Agent", "GoPostTools/4.x")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return result, fmt.Errorf("download torrent: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return result, fmt.Errorf("download torrent HTTP %d", resp.StatusCode)
+	}
+	tmpFile, err := os.CreateTemp("", "del-*.torrent")
+	if err != nil {
+		return result, err
+	}
+	defer os.Remove(tmpFile.Name())
+	if _, err := io.Copy(tmpFile, resp.Body); err != nil {
+		return result, err
+	}
+	tmpFile.Close()
+
+	// 2. Parse metainfo → liste des fichiers
+	mi, err := metainfo.LoadFromFile(tmpFile.Name())
+	if err != nil {
+		return result, fmt.Errorf("parse .torrent: %w", err)
+	}
+	info, err := mi.UnmarshalInfo()
+	if err != nil {
+		return result, fmt.Errorf("unmarshal info: %w", err)
+	}
+	if len(info.Files) == 0 {
+		// Single-file torrent
+		result.FilesAttempted = []string{info.Name}
+	} else {
+		for _, f := range info.Files {
+			result.FilesAttempted = append(result.FilesAttempted, f.DisplayPath(&info))
+		}
+	}
+
+	// 2.5. Supprime le torrent de la seedbox (ruTorrent puis qBit en fallback)
+	infoHash := strings.ToLower(mi.HashInfoBytes().HexString())
+	if a.cfg.SeedboxURL != "" {
+		if err := rutorrent.Erase(a.cfg.SeedboxURL, a.cfg.SeedboxUser, a.cfg.SeedboxPassword, infoHash); err == nil {
+			result.SeedboxOK = true
+			result.UsedSeedbox = "rutorrent"
+		} else {
+			result.SeedboxErr = "rutorrent: " + err.Error()
+		}
+	}
+	if !result.SeedboxOK && a.cfg.QBitURL != "" {
+		if err := qbittorrent.Delete(a.cfg.QBitURL, a.cfg.QBitUser, a.cfg.QBitPassword, infoHash, false); err == nil {
+			result.SeedboxOK = true
+			result.UsedSeedbox = "qbit"
+			result.SeedboxErr = ""
+		} else {
+			if result.SeedboxErr != "" {
+				result.SeedboxErr += " · "
+			}
+			result.SeedboxErr += "qbit: " + err.Error()
+		}
+	}
+
+	// 3. Tente FTP perso d'abord, puis FTP mod en fallback
+	tryFTP := func(host string, port int, user, password, path, label string) bool {
+		if host == "" || user == "" {
+			return false
+		}
+		anyOK := false
+		for _, fname := range result.FilesAttempted {
+			err := ftpup.Delete(host, port, user, password, path, fname)
+			if err == nil {
+				result.FTPDeleted = append(result.FTPDeleted, fname+" ("+label+")")
+				anyOK = true
+			} else {
+				result.FTPErrors = append(result.FTPErrors, fname+" ("+label+"): "+err.Error())
+			}
+		}
+		return anyOK
+	}
+	if tryFTP(a.cfg.FTPHost, a.cfg.FTPPort, a.cfg.FTPUser, a.cfg.FTPPassword, a.cfg.FTPPath, "perso") {
+		result.UsedFTP = "perso"
+	} else if tryFTP(a.cfg.FTPModHost, a.cfg.FTPModPort, a.cfg.FTPModUser, a.cfg.FTPModPassword, a.cfg.FTPModPath, "mod") {
+		result.UsedFTP = "mod"
+	}
+
+	// 4. DELETE Hydracker
+	if err := a.client.DeleteTorrent(torrentID); err != nil {
+		result.HydrackerErr = err.Error()
+		return result, fmt.Errorf("delete hydracker: %w", err)
+	}
+	result.HydrackerOK = true
+	return result, nil
 }
 
 // UpdateMyLien — PUT sur /liens/{id} avec les champs modifiables.

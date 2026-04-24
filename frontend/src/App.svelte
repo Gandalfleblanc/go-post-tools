@@ -5,7 +5,7 @@
   import HydrackerTab from './HydrackerTab.svelte'
   import { logEntries, addLog, clearLogs } from './logs.js'
   import logo from './assets/logo.png'
-  import { ListCheckTorrents, ReseedFromLihdl, ReseedPrepare, ReseedExecute, SelectAnyTorrentFile, SelectMkvFile, GetVersion, StartWatchFolder, StopWatchFolder, IsWatching, CheckForUpdate, OpenBrowser, HistoryList, HistoryDelete, HistoryStats, DownloadUpdate, HasLihdlSettingsPassword, SetLihdlSettingsPassword, VerifyLihdlSettingsPassword, ClearLihdlSettingsPassword, IsLihdlPasswordManaged, IsHydrackerURLManaged, GetEffectiveHydrackerURL, FindHydrackerSources, FicheGetContent, FicheGetNfo, GetDDLFilename, HydrackerSearch, HydrackerGetByID, HydrackerGetByTmdbID, DownloadToDownloads, AutoReseedFromHydracker, AutoReseedDDLFromHydracker, AutoReseedFullFromTorrent, ListReseedRequests, ListMyLiens, ListMyTorrents, DeleteMyLien, DeleteMyTorrent, DeleteMyNzb, UpdateMyLien, UpdateMyTorrent, GetMetaQualities, ListTitlesSorted, GetUserProfile, ParseFilename, Notify } from '../wailsjs/go/main/App.js'
+  import { ListCheckTorrents, ReseedFromLihdl, ReseedPrepare, ReseedExecute, SelectAnyTorrentFile, SelectMkvFile, GetVersion, StartWatchFolder, StopWatchFolder, IsWatching, CheckForUpdate, OpenBrowser, HistoryList, HistoryDelete, HistoryStats, DownloadUpdate, HasLihdlSettingsPassword, SetLihdlSettingsPassword, VerifyLihdlSettingsPassword, ClearLihdlSettingsPassword, IsLihdlPasswordManaged, IsHydrackerURLManaged, GetEffectiveHydrackerURL, FindHydrackerSources, FicheGetContent, FicheGetNfo, GetDDLFilename, GetUploaderStats, HydrackerSearch, TMDBGetByImdbID, TMDBGetProviders, HydrackerGetByID, HydrackerGetByTmdbID, DownloadToDownloads, AutoReseedFromHydracker, AutoReseedDDLFromHydracker, AutoReseedFullFromTorrent, ListReseedRequests, ListMyLiens, ListMyTorrents, DeleteMyLien, DeleteMyTorrent, DeleteMyNzb, DeleteTorrentAndFTP, ListSeedboxHashes, GetNexumIndex, TestNexum, UpdateMyLien, UpdateMyTorrent, GetMetaQualities, ListTitlesSorted, GetUserProfile, ParseFilename, Notify } from '../wailsjs/go/main/App.js'
 
   // --- Tabs ---
   const TABS = [
@@ -15,9 +15,7 @@
     { id: 'requests',  label: '📋 Demandes Reseed' },
     { id: 'reseed',    label: '♻️ Reseed' },
     { id: 'myuploads', label: '📤 Mes uploads' },
-    { id: 'stats',     label: '📊 Stats' },
     { id: 'history',   label: '📚 Historique' },
-    { id: 'api',       label: '🔑 API' },
     { id: 'apilog',    label: '🔬 Log API' },
     { id: 'settings',  label: '⚙️ Réglages' },
     { id: 'log',       label: '📋 Journal' },
@@ -28,8 +26,11 @@
   let cfg = {
     hydracker_token: '',
     tmdb_api_key: '',
+    tmdb_proxy_url: 'https://tmdb.uklm.xyz',
     one_fichier_api_key: '',
     sendcm_api_key: '',
+    nexum_api_key: '',
+    nexum_base_url: 'https://nexum-core.com',
     usenet_host: '', usenet_port: 119, usenet_ssl: false,
     usenet_user: '', usenet_password: '', usenet_connections: 20,
     usenet_group: 'alt.binaries.test',
@@ -52,7 +53,8 @@
   let updateChecking = false
   let updateCheckMsg = ''
 
-  // Protection par mot de passe de la section LiHDL
+  // LiHDL : protection admin (index + recherche TMDB — bonus pour les admins
+  // qui ont le mdp partagé, les autres s'en passent et utilisent l'API TMDB).
   let lihdlUnlocked = false
   let lihdlHasPassword = false
   let lihdlManaged = false // true = mdp imposé au build, user ne peut pas le modifier
@@ -69,8 +71,8 @@
     try { lihdlManaged = await IsLihdlPasswordManaged() } catch(e) { lihdlManaged = false }
   }
 
-  // --- Protection des sections SEEDBOX/FTP (mdp partagé entre admins) ---
-  let seedboxUnlocked = false
+  // --- Sections SEEDBOX/FTP : plus de mdp, toujours ouvert ---
+  let seedboxUnlocked = true
   let seedboxHasPassword = false
   let seedboxModal = null  // null | 'unlock' | 'create' | 'change' | 'remove'
   let seedboxPwdInput = ''
@@ -96,6 +98,9 @@
         if (!ok) { seedboxPwdError = 'Mot de passe incorrect'; return }
         seedboxUnlocked = true
         seedboxModal = null
+        // Notifie HydrackerTab que l'user vient d'être confirmé admin
+        // → Torrent ADMIN devient visible dans la section Uploader via.
+        window.dispatchEvent(new CustomEvent('admin-unlocked'))
       } else if (seedboxModal === 'create') {
         if (seedboxPwdNew.length < 4) { seedboxPwdError = 'Mot de passe trop court (4 min)'; return }
         if (seedboxPwdNew !== seedboxPwdConfirm) { seedboxPwdError = 'Les mots de passe ne correspondent pas'; return }
@@ -402,22 +407,46 @@
     fichesLoading = false
   }
 
+  // État bonus pour la fiche détail (note IMDb + watch providers via proxytmdb)
+  let fichesProviders = null      // map[country]CountryProviders ou null
+  let fichesProvidersLoading = false
+  let fichesImdbInfo = null       // tmdb.Movie avec note_imdb
+
   async function fichesOpen(fiche) {
     fichesSelected = fiche
     fichesContent = null
     fichesContentLoading = true
     fichesContentTab = 'torrents'
+    fichesProviders = null
+    fichesImdbInfo = null
     try {
       fichesContent = await FicheGetContent(fiche.id)
     } catch(e) {
       addLog('FICHE', '✗ ' + e)
     }
     fichesContentLoading = false
+
+    // Bonus async (non-bloquant) : fetch watch providers + note IMDb
+    if (fiche.tmdb_id) {
+      const mediaType = fiche.type === 'series' ? 'tv' : 'movie'
+      fichesProvidersLoading = true
+      TMDBGetProviders(fiche.tmdb_id, mediaType)
+        .then(p => { fichesProviders = p || {} })
+        .catch(() => {})
+        .finally(() => { fichesProvidersLoading = false })
+    }
+    if (fiche.imdb_id) {
+      TMDBGetByImdbID(fiche.imdb_id)
+        .then(m => { fichesImdbInfo = m })
+        .catch(() => {})
+    }
   }
 
   function fichesBackToResults() {
     fichesSelected = null
     fichesContent = null
+    fichesProviders = null
+    fichesImdbInfo = null
   }
 
   async function downloadLienFromFiche(lien) {
@@ -526,6 +555,17 @@
   let localMkvCheck = null          // { filename, parsed, hydrackerFiche, content, error }
   let localMkvChecking = false
 
+  // Set des hashes que l'user a actuellement sur sa seedbox (lowercase).
+  // Rempli au load via ListSeedboxHashes — sert à filtrer Check Torrent pour
+  // ne montrer que les torrents qu'on a réellement encore en seed.
+  let seedboxHashes = new Set()
+  let seedboxHashesLoaded = false
+  let onlyMine = true   // toggle "présents seulement" / "tous les Hydracker"
+
+  // Index Nexum : map lowercase info_hash → {id, name, seeders, created_at, …}
+  let nexumIndex = {}
+  let nexumLoaded = false
+
   async function loadMySeeds() {
     mySeedsLoading = true
     mySeedsError = ''
@@ -540,9 +580,43 @@
       addLog('SEED', '✗ ' + mySeedsError)
     }
     mySeedsLoading = false
+    // Refresh aussi les hashes seedbox + index Nexum en parallèle (non bloquant)
+    loadSeedboxHashes()
+    loadNexumIndex()
+  }
+
+  async function loadNexumIndex() {
+    if (!cfg.nexum_api_key) { nexumLoaded = false; return }
+    try {
+      const idx = await GetNexumIndex()
+      nexumIndex = idx || {}
+      nexumLoaded = true
+      addLog('NEXUM', `📡 Nexum : ${Object.keys(nexumIndex).length} torrents trouvés sur ton compte`)
+    } catch(e) {
+      nexumLoaded = false
+      addLog('NEXUM', `⚠ Index Nexum indispo : ${e}`)
+    }
+  }
+
+  async function loadSeedboxHashes() {
+    try {
+      const list = await ListSeedboxHashes()
+      seedboxHashes = new Set((list || []).map(h => h.toLowerCase()))
+      seedboxHashesLoaded = true
+      addLog('SEED', `📡 Seedbox : ${seedboxHashes.size} torrents trouvés sur ta seedbox`)
+    } catch(e) {
+      seedboxHashesLoaded = false
+      addLog('SEED', `⚠ Liste seedbox indispo : ${e}`)
+    }
   }
 
   $: filteredMySeeds = mySeedsTorrents.filter(t => {
+    // Filtre 1 : présent sur ta seedbox (si toggle activé et liste chargée)
+    if (onlyMine && seedboxHashesLoaded) {
+      const h = (t.info_hash || t.hash || '').toLowerCase()
+      if (!h || !seedboxHashes.has(h)) return false
+    }
+    // Filtre 2 : seeders count
     const s = t.seeders || 0
     if (mySeedsFilter === '0seed') return s === 0
     if (mySeedsFilter === 'low') return s > 0 && s <= 2
@@ -594,6 +668,31 @@
     checkActionActiveID = 0
     setTimeout(() => { const { [t.id]: _, ...rest } = checkActionProg; checkActionProg = rest }, 4000)
   }
+
+  // --- Suppression complète d'un torrent (Hydracker + FTP) ---
+  let deleteTorrentModal = null   // null | { torrent, loading, result, error }
+  function askDeleteTorrent(t) {
+    deleteTorrentModal = { torrent: t, loading: false, result: null, error: '' }
+  }
+  async function confirmDeleteTorrent() {
+    if (!deleteTorrentModal?.torrent) return
+    const t = deleteTorrentModal.torrent
+    deleteTorrentModal = { ...deleteTorrentModal, loading: true, error: '' }
+    mySeedsActioning = { ...mySeedsActioning, [t.id]: true }
+    addLog('DEL', `▶ Suppression torrent #${t.id} + fichier(s) FTP`)
+    try {
+      const r = await DeleteTorrentAndFTP(t.id)
+      deleteTorrentModal = { ...deleteTorrentModal, loading: false, result: r }
+      addLog('DEL', `✓ Hydracker OK · FTP ${r.used_ftp || 'rien trouvé'} · ${r.ftp_deleted?.length || 0} fichier(s) supprimé(s)`)
+      try { Notify('🗑 Torrent supprimé', t.torrent_name || t.name || ('#' + t.id)) } catch(e) {}
+      setTimeout(loadMySeeds, 1500)
+    } catch(e) {
+      deleteTorrentModal = { ...deleteTorrentModal, loading: false, error: String(e?.message || e) }
+      addLog('DEL', `✗ Suppr #${t.id} : ${e}`)
+    }
+    mySeedsActioning = { ...mySeedsActioning, [t.id]: false }
+  }
+  function closeDeleteTorrentModal() { deleteTorrentModal = null }
 
   async function checkLocalMkv() {
     try {
@@ -908,6 +1007,46 @@
 
   $: if (activeTab === 'stats' && !statsGlobal) loadGlobalStats()
   $: if (activeTab === 'stats' && !qualityOptions.length) GetMetaQualities().then(q => qualityOptions = q || []).catch(() => {})
+
+  // --- Stats uploaders (page d'accueil Stats) ---
+  let topUploaders = null          // UploaderScanResult
+  let topUploadersLoading = false
+  let topUploadersError = ''
+  let scanSize = 30  // jours à scanner (au lieu de "fiches")
+  let uploadersSort = 'total'      // 'total' | 'torrents' | 'nzbs' | 'liens' | 'size' | 'last' | 'author'
+  let uploadersSortDir = 'desc'    // 'desc' | 'asc'
+  let uploadersFilter = ''
+  async function loadTopUploaders() {
+    topUploadersLoading = true
+    topUploadersError = ''
+    try {
+      topUploaders = await GetUploaderStats(scanSize)
+    } catch(e) {
+      topUploadersError = String(e?.message || e)
+    }
+    topUploadersLoading = false
+  }
+  function setSort(col) {
+    if (uploadersSort === col) { uploadersSortDir = uploadersSortDir === 'desc' ? 'asc' : 'desc' }
+    else { uploadersSort = col; uploadersSortDir = 'desc' }
+  }
+  $: filteredUploaders = (() => {
+    if (!topUploaders?.uploaders) return []
+    const q = uploadersFilter.trim().toLowerCase()
+    let list = q ? topUploaders.uploaders.filter(u => u.author.toLowerCase().includes(q)) : [...topUploaders.uploaders]
+    const dir = uploadersSortDir === 'desc' ? -1 : 1
+    const cmp = {
+      total:    (a,b) => (a.total - b.total) * dir,
+      torrents: (a,b) => (a.torrents - b.torrents) * dir,
+      nzbs:     (a,b) => (a.nzbs - b.nzbs) * dir,
+      liens:    (a,b) => (a.liens - b.liens) * dir,
+      size:     (a,b) => (a.total_size - b.total_size) * dir,
+      last:     (a,b) => ((a.last_upload_at||'') > (b.last_upload_at||'') ? 1 : -1) * dir,
+      author:   (a,b) => a.author.localeCompare(b.author) * dir,
+    }[uploadersSort]
+    if (cmp) list.sort(cmp)
+    return list
+  })()
 
   function fmtBytes(n) {
     if (!n) return '0'
@@ -1248,12 +1387,55 @@
                   {fichesSelected.type === 'series' ? '📺 Série' : '🎬 Film'}
                   {#if fichesSelected.release_date}· {fichesSelected.release_date.slice(0,4)}{/if}
                   · Hydracker #{fichesSelected.id}
+                  {#if fichesSelected.imdb_id}· IMDb {fichesSelected.imdb_id}{/if}
+                </div>
+                <!-- Notes (TMDB depuis Hydracker + IMDb depuis proxytmdb) -->
+                <div style="display:flex;gap:14px;margin-bottom:10px;font-size:12px;color:var(--text2)">
+                  {#if fichesSelected.score || fichesSelected.rating}
+                    <span>⭐ <b>TMDB</b> {(fichesSelected.score || fichesSelected.rating).toFixed(1)}</span>
+                  {/if}
+                  {#if fichesImdbInfo?.note_imdb}
+                    <span style="color:#ffd60a">🟡 <b>IMDb</b> {fichesImdbInfo.note_imdb} <span style="opacity:0.7">({fichesImdbInfo.vote_imdb?.toLocaleString() || ''} votes)</span></span>
+                  {/if}
                 </div>
                 <button class="btn-test" on:click={() => OpenBrowser(`https://hydracker.com/titles/${fichesSelected.id}`)}>
                   🌐 Ouvrir sur Hydracker
                 </button>
+                {#if fichesSelected.imdb_id}
+                  <button class="btn-test" on:click={() => OpenBrowser(`https://www.imdb.com/title/${fichesSelected.imdb_id}`)}>🟡 IMDb</button>
+                {/if}
+                {#if fichesSelected.tmdb_id}
+                  <button class="btn-test" on:click={() => OpenBrowser(`https://www.themoviedb.org/${fichesSelected.type === 'series' ? 'tv' : 'movie'}/${fichesSelected.tmdb_id}`)}>🎬 TMDB</button>
+                {/if}
               </div>
             </div>
+
+            <!-- Watch providers FR (Netflix, Disney+, etc.) -->
+            {#if fichesProviders && fichesProviders.FR}
+              {@const fr = fichesProviders.FR}
+              <div style="margin-top:14px;padding:10px;background:rgba(255,255,255,0.025);border-radius:8px">
+                <div style="font-size:11px;color:var(--text3);margin-bottom:6px;text-transform:uppercase;letter-spacing:0.3px">📺 Streaming FR</div>
+                <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center">
+                  {#each (fr.flatrate || []) as p}
+                    <div style="display:flex;align-items:center;gap:5px;padding:4px 8px;background:rgba(126,240,192,0.08);border:1px solid rgba(126,240,192,0.25);border-radius:6px;font-size:11px">
+                      <img src={`https://image.tmdb.org/t/p/w45${p.logo_path}`} alt={p.provider_name} style="width:18px;height:18px;border-radius:3px" />
+                      <span>{p.provider_name}</span>
+                    </div>
+                  {/each}
+                  {#each (fr.rent || []) as p}
+                    <div style="display:flex;align-items:center;gap:5px;padding:4px 8px;background:rgba(255,255,255,0.04);border:1px solid var(--border);border-radius:6px;font-size:11px;opacity:0.85" title="Location">
+                      <img src={`https://image.tmdb.org/t/p/w45${p.logo_path}`} alt={p.provider_name} style="width:18px;height:18px;border-radius:3px" />
+                      <span>{p.provider_name} <span style="color:var(--text3)">(loc)</span></span>
+                    </div>
+                  {/each}
+                  {#if !(fr.flatrate?.length) && !(fr.rent?.length)}
+                    <span style="color:var(--text3);font-size:11px">Pas dispo en streaming en France actuellement.</span>
+                  {/if}
+                </div>
+              </div>
+            {:else if fichesProvidersLoading}
+              <div style="margin-top:10px;color:var(--text3);font-size:11px">⏳ Chargement des providers streaming…</div>
+            {/if}
           </div>
 
           <div class="section">
@@ -1616,160 +1798,6 @@
         {/if}
       </div>
 
-    <!-- ===== STATS ===== -->
-    {:else if activeTab === 'stats'}
-      <div class="tab-content">
-        <h2>📊 Stats</h2>
-
-        <!-- Recherche uploader -->
-        <div class="section">
-          <div class="section-header"><span>🔍 Rechercher un uploader</span></div>
-          <div class="field">
-            <div class="pwd-row">
-              <input type="text" bind:value={statsUserQuery}
-                placeholder="Pseudo (ex: Gandalf) ou ID numérique"
-                on:keydown={e => e.key === 'Enter' && !statsUserLoading && searchStatsUser()} />
-              <button class="btn-save" on:click={searchStatsUser} disabled={statsUserLoading || !statsUserQuery}>
-                {statsUserLoading ? '…' : '🔍 Chercher'}
-              </button>
-            </div>
-          </div>
-          {#if statsUserError}
-            <div style="color:#ff9585;font-size:12px;margin-top:6px">⚠ {statsUserError}</div>
-          {/if}
-          {#if statsUserProfile}
-            <div style="margin-top:12px;padding:14px;background:rgba(0,180,216,0.05);border:1px solid rgba(0,180,216,0.25);border-radius:10px">
-              <div style="display:flex;gap:14px;align-items:flex-start">
-                {#if statsUserProfile.image}
-                  <img src={`https://hydracker.com/${statsUserProfile.image}`} alt="" style="width:60px;height:60px;border-radius:50%;object-fit:cover" on:error={(e) => e.currentTarget.style.display = 'none'} />
-                {/if}
-                <div style="flex:1">
-                  <div style="font-size:15px;font-weight:600;color:var(--text)">
-                    {statsUserProfile.username}
-                    {#if statsUserProfile.IsPremium}<span style="color:#ffd60a;font-size:11px;margin-left:6px">⭐ Premium</span>{/if}
-                  </div>
-                  <div style="color:var(--text3);font-size:11px;margin-bottom:8px">
-                    #{statsUserProfile.id}
-                    {#if statsUserProfile.created_at}· Inscrit le {statsUserProfile.created_at.slice(0,10)}{/if}
-                    {#if statsUserProfile.country}· {statsUserProfile.country}{/if}
-                  </div>
-                  {#if statsUserProfile.bio}
-                    <div style="color:var(--text2);font-size:12px;margin-bottom:6px;font-style:italic">« {statsUserProfile.bio} »</div>
-                  {/if}
-                  <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px;margin-top:10px">
-                    <div class="stat-cell"><div class="stat-k">Uploaded</div><div class="stat-v">{fmtBytes(statsUserProfile.uploaded)}</div></div>
-                    <div class="stat-cell"><div class="stat-k">Downloaded</div><div class="stat-v">{fmtBytes(statsUserProfile.downloaded)}</div></div>
-                    <div class="stat-cell"><div class="stat-k">Ratio</div><div class="stat-v">{statsUserProfile.ratio || '—'}</div></div>
-                    <div class="stat-cell"><div class="stat-k">Followers</div><div class="stat-v">{statsUserProfile.followers_count || 0}</div></div>
-                    {#if statsUserProfile.wallet_balance}
-                      <div class="stat-cell"><div class="stat-k">Wallet</div><div class="stat-v">{statsUserProfile.wallet_balance}€</div></div>
-                    {/if}
-                    <div class="stat-cell"><div class="stat-k">Torrents postés</div><div class="stat-v">{statsUserProfile._totalTorrents ?? '?'}</div></div>
-                    <div class="stat-cell"><div class="stat-k">DDL postés</div><div class="stat-v">{statsUserProfile._totalLiens ?? '?'}</div></div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          {/if}
-        </div>
-
-        <div class="section" style="display:flex;justify-content:space-between;align-items:center">
-          <span style="color:var(--text3);font-size:12px">Stats calculées depuis les 50 derniers items de chaque type. Rafraîchis pour mettre à jour.</span>
-          <button class="btn-test" on:click={loadGlobalStats} disabled={statsLoading}>🔄 Rafraîchir</button>
-        </div>
-
-        {#if statsLoading && !statsGlobal}
-          <div class="section"><div style="color:var(--text3);font-size:12px">Chargement…</div></div>
-        {:else if statsError}
-          <div class="section"><div style="color:#ff9585;font-size:12px">⚠ {statsError}</div></div>
-        {:else if statsGlobal}
-          <!-- Section 1 : Totaux globaux -->
-          <div class="section">
-            <div class="section-header"><span>🌍 Totaux site</span></div>
-            <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:10px">
-              <div class="stat-cell"><div class="stat-k">Fiches (titres)</div><div class="stat-v" style="font-size:18px">{statsGlobal.totalTitles.toLocaleString()}</div></div>
-              <div class="stat-cell"><div class="stat-k">Torrents</div><div class="stat-v" style="font-size:18px">{statsGlobal.totalTorrents.toLocaleString()}</div></div>
-              <div class="stat-cell"><div class="stat-k">Liens DDL</div><div class="stat-v" style="font-size:18px">{statsGlobal.totalLiens.toLocaleString()}</div></div>
-            </div>
-          </div>
-
-          <!-- Section 2 : Stats fiches (top populaires) -->
-          <div class="section">
-            <div class="section-header"><span>🎞 Top fiches (popularité)</span></div>
-            <div class="fiches-grid">
-              {#each statsGlobal.topTitles.slice(0, 10) as t}
-                <button class="fiche-card" on:click={() => { activeTab = 'fiches'; fichesMode = 'hydracker_id'; fichesQuery = String(t.id); fichesSearch() }} title={t.name}>
-                  {#if t.poster}
-                    <img src={t.poster} alt={t.name} loading="lazy" />
-                  {:else}
-                    <div class="fiche-no-poster">📽</div>
-                  {/if}
-                  <div class="fiche-info">
-                    <div class="fiche-name">{t.name}</div>
-                    <div class="fiche-meta">
-                      {#if t.release_date}{t.release_date.slice(0,4)}{/if}
-                      {#if t.score}· ⭐ {t.score.toFixed(1)}{/if}
-                    </div>
-                  </div>
-                </button>
-              {/each}
-            </div>
-          </div>
-
-          <!-- Section 3 : Top uploaders -->
-          <div class="section">
-            <div class="section-header"><span>👥 Top uploaders (sample récent)</span></div>
-            {#if statsGlobal.topUploaders.length}
-              {#each statsGlobal.topUploaders as u, i}
-                <div style="display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px solid rgba(255,255,255,0.04)">
-                  <span style="min-width:28px;color:var(--text3);font-size:11px">#{i+1}</span>
-                  <span style="flex:1;font-weight:{i<3?'600':'normal'};color:{i===0?'#ffd60a':(i===1?'#c0c0c0':(i===2?'#cd7f32':'var(--text)'))}">{u.username}</span>
-                  <div class="stat-bar" style="flex:2">
-                    <div class="stat-bar-fill" style="width:{Math.min(100, u.count/statsGlobal.topUploaders[0].count*100)}%"></div>
-                  </div>
-                  <span style="min-width:40px;text-align:right;color:var(--text2);font-size:12px">{u.count}</span>
-                  <button class="btn-test" on:click={() => { statsUserQuery = u.username; searchStatsUser() }}>👤 Voir</button>
-                </div>
-              {/each}
-            {:else}
-              <div style="color:var(--text3);font-size:12px">Aucune donnée.</div>
-            {/if}
-          </div>
-
-          <!-- Section 4 : Répartition qualité -->
-          {#if statsGlobal.qualDist.length}
-            <div class="section">
-              <div class="section-header"><span>🎬 Répartition par qualité (sample)</span></div>
-              {#each statsGlobal.qualDist.slice(0, 12) as q}
-                <div style="display:flex;align-items:center;gap:10px;padding:4px 0">
-                  <span style="flex:1;font-size:12px">{q.name}</span>
-                  <div class="stat-bar" style="flex:2">
-                    <div class="stat-bar-fill" style="width:{Math.min(100, q.count/statsGlobal.qualDist[0].count*100)}%;background:#7ef0c0"></div>
-                  </div>
-                  <span style="min-width:40px;text-align:right;color:var(--text2);font-size:12px">{q.count}</span>
-                </div>
-              {/each}
-            </div>
-          {/if}
-
-          <!-- Section 5 : Répartition hosts DDL -->
-          {#if statsGlobal.hostDist.length}
-            <div class="section">
-              <div class="section-header"><span>🔗 Hosts DDL les plus utilisés (sample)</span></div>
-              {#each statsGlobal.hostDist as h}
-                <div style="display:flex;align-items:center;gap:10px;padding:4px 0">
-                  <span style="flex:1;font-size:12px">{h.name}</span>
-                  <div class="stat-bar" style="flex:2">
-                    <div class="stat-bar-fill" style="width:{Math.min(100, h.count/statsGlobal.hostDist[0].count*100)}%;background:#ffd60a"></div>
-                  </div>
-                  <span style="min-width:40px;text-align:right;color:var(--text2);font-size:12px">{h.count}</span>
-                </div>
-              {/each}
-            </div>
-          {/if}
-        {/if}
-      </div>
-
     <!-- ===== LOG API ===== -->
     {:else if activeTab === 'apilog'}
       <div class="tab-content">
@@ -2026,6 +2054,10 @@
             </div>
           </div>
           <div class="field" style="display:flex;gap:6px;flex-wrap:wrap">
+            <button class="btn-test" class:active-chip={onlyMine} on:click={() => onlyMine = !onlyMine}
+              title="Si actif : ne montre que les torrents que tu as ENCORE sur ta seedbox / qBit (filtre par info_hash)">
+              {onlyMine ? '✅' : '⬜'} Sur ma seedbox uniquement{seedboxHashesLoaded ? ` (${seedboxHashes.size})` : ''}
+            </button>
             <button class="btn-test" class:active-chip={mySeedsFilter === 'all'} on:click={() => mySeedsFilter = 'all'}>Tous ({mySeedsTorrents.length})</button>
             <button class="btn-test" class:active-chip={mySeedsFilter === '0seed'} on:click={() => mySeedsFilter = '0seed'} style="color:#ff6b6b">🔴 0 seed ({mySeedsTorrents.filter(t => (t.seeders||0) === 0).length})</button>
             <button class="btn-test" class:active-chip={mySeedsFilter === 'low'} on:click={() => mySeedsFilter = 'low'} style="color:#ffd60a">🟠 1-2 seeds ({mySeedsTorrents.filter(t => (t.seeders||0) > 0 && (t.seeders||0) <= 2).length})</button>
@@ -2045,12 +2077,21 @@
             {#each filteredMySeeds as t}
               {@const seeders = t.seeders || 0}
               {@const seedColor = seeders === 0 ? '#ff6b6b' : (seeders <= 2 ? '#ffd60a' : '#7ef0c0')}
+              {@const nx = (() => {
+                const h = (t.info_hash || t.hash || '').toLowerCase()
+                if (h && nexumIndex['h:' + h]) return nexumIndex['h:' + h]
+                const norm = (t.torrent_name || t.name || '').toLowerCase().replace(/[^a-z0-9]/g, '')
+                if (norm && nexumIndex['n:' + norm]) return nexumIndex['n:' + norm]
+                return null
+              })()}
               <div class="my-item" style="border-left: 3px solid {seedColor}">
                 <div style="flex:1;min-width:0">
                   <div style="font-size:12px;font-weight:600;color:var(--text);margin-bottom:3px">
                     #{t.id} · {t.torrent_name || t.name || '(sans nom)'}
                   </div>
+                  <!-- Ligne Hydracker -->
                   <div style="display:flex;gap:10px;flex-wrap:wrap;font-size:11px;color:var(--text3)">
+                    <span style="color:#fb923c;font-weight:600">🟧 Hydra</span>
                     <span style="color:{seedColor};font-weight:600">🌱 {seeders} seed{seeders > 1 ? 's' : ''}</span>
                     {#if t.leechers}<span>⬇ {t.leechers} leech</span>{/if}
                     <span>fiche #{t.title_id}</span>
@@ -2059,6 +2100,21 @@
                     {#if t.taille || t.size}<span>{((t.taille||t.size)/1e9).toFixed(2)} GB</span>{/if}
                     <span>📅 {(t.created_at || '').slice(0,10)}</span>
                   </div>
+                  <!-- Ligne Nexum (si match) -->
+                  {#if nx}
+                    {@const nxSeeders = nx.seeders || 0}
+                    {@const nxColor = nxSeeders === 0 ? '#ff6b6b' : (nxSeeders <= 2 ? '#ffd60a' : '#7ef0c0')}
+                    <div style="display:flex;gap:10px;flex-wrap:wrap;font-size:11px;color:var(--text3);margin-top:2px">
+                      <span style="color:#a78bfa;font-weight:600">🟪 Nexum</span>
+                      <span style="color:{nxColor};font-weight:600">🌱 {nxSeeders} seed{nxSeeders > 1 ? 's' : ''}</span>
+                      {#if nx.leechers}<span>⬇ {nx.leechers} leech</span>{/if}
+                      <span>#{nx.id}</span>
+                      <span>📅 {(nx.created_at || '').slice(0,10)}</span>
+                      <button class="btn-test" style="padding:0 6px;font-size:10px" on:click={() => OpenBrowser(`${cfg.nexum_base_url || 'https://nexum-core.com'}/torrents/${nx.id}`)}>🌐</button>
+                    </div>
+                  {:else if nexumLoaded}
+                    <div style="font-size:10px;color:var(--text3);margin-top:2px;opacity:0.6">🟪 Nexum : pas posté</div>
+                  {/if}
                 </div>
                 <div style="display:flex;flex-direction:column;gap:4px;align-self:center">
                   <button class="btn-save" on:click={() => autoReseedFromCheck(t)} disabled={mySeedsActioning[t.id]} title="Push .torrent sur seedbox (nécessite que quelqu'un seed pour que BT retrouve le fichier)">
@@ -2071,6 +2127,9 @@
                     </button>
                   {/if}
                   <button class="btn-test" on:click={() => OpenBrowser(`https://hydracker.com/titles/${t.title_id}`)}>🌐 Fiche</button>
+                  <button class="btn-test" style="background:#5a1a1a;color:#ff6b6b;border-color:#ff6b6b" on:click={() => askDeleteTorrent(t)} disabled={mySeedsActioning[t.id]} title="Supprime le .torrent sur Hydracker ET le fichier sur ton FTP">
+                    🗑 Suppr +FTP
+                  </button>
                 </div>
               </div>
               {#if checkActionProg[t.id]}
@@ -2089,6 +2148,63 @@
             {/each}
           {/if}
         </div>
+
+        <!-- Modal confirmation suppression torrent + FTP -->
+        {#if deleteTorrentModal}
+          <div class="modal-backdrop" on:click|self={closeDeleteTorrentModal}>
+            <div class="modal-card" style="max-width:560px">
+              <div class="modal-title" style="color:#ff6b6b">🗑 Suppression définitive</div>
+              {#if !deleteTorrentModal.result}
+                <div class="modal-hint">{deleteTorrentModal.torrent.torrent_name || deleteTorrentModal.torrent.name || '#' + deleteTorrentModal.torrent.id}</div>
+                <div style="margin:14px 0;font-size:12px;line-height:1.5;color:var(--text2)">
+                  Cette action va :<br>
+                  1️⃣ Supprimer le torrent <b>#{deleteTorrentModal.torrent.id}</b> sur Hydracker (DELETE)<br>
+                  2️⃣ Récupérer le .torrent + parser les fichiers<br>
+                  3️⃣ Supprimer le(s) fichier(s) sur ton FTP perso (puis FTP mod en fallback)<br>
+                  <br>
+                  <span style="color:#ff9585">⚠ Irréversible.</span>
+                </div>
+                {#if deleteTorrentModal.error}
+                  <div style="color:#ff6b6b;font-size:12px;margin:10px 0">⚠ {deleteTorrentModal.error}</div>
+                {/if}
+                <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px">
+                  <button class="btn-test" on:click={closeDeleteTorrentModal} disabled={deleteTorrentModal.loading}>Annuler</button>
+                  <button class="btn-save" style="background:#7a1c1c;color:#fff" on:click={confirmDeleteTorrent} disabled={deleteTorrentModal.loading}>
+                    {deleteTorrentModal.loading ? '⏳ Suppression…' : '🗑 Confirmer la suppression'}
+                  </button>
+                </div>
+              {:else}
+                {@const r = deleteTorrentModal.result}
+                <div style="margin:14px 0;font-size:12px;line-height:1.6">
+                  <div style="color:{r.hydracker_ok ? '#7ef0c0' : '#ff6b6b'}">
+                    {r.hydracker_ok ? '✓' : '✗'} Hydracker : {r.hydracker_ok ? 'torrent supprimé' : (r.hydracker_err || 'échec')}
+                  </div>
+                  <div style="color:{r.seedbox_ok ? '#7ef0c0' : '#ffd60a'};margin-top:6px">
+                    {r.seedbox_ok ? '✓' : '⚠'} Seedbox : {r.seedbox_ok ? `torrent retiré (${r.used_seedbox})` : (r.seedbox_err || 'pas de seedbox configurée')}
+                  </div>
+                  <div style="color:{r.ftp_deleted?.length ? '#7ef0c0' : '#ffd60a'};margin-top:6px">
+                    {r.ftp_deleted?.length ? '✓' : '⚠'} FTP : {r.ftp_deleted?.length || 0} fichier(s) supprimé(s)
+                    {#if r.used_ftp}<span style="color:var(--text3)"> (via {r.used_ftp})</span>{/if}
+                  </div>
+                  {#if r.ftp_deleted?.length}
+                    <ul style="font-size:11px;color:var(--text3);margin:6px 0 0 22px">
+                      {#each r.ftp_deleted as f}<li>{f}</li>{/each}
+                    </ul>
+                  {/if}
+                  {#if r.ftp_errors?.length && !r.ftp_deleted?.length}
+                    <div style="font-size:11px;color:#ff9585;margin-top:6px">Erreurs FTP :</div>
+                    <ul style="font-size:11px;color:#ff9585;margin:4px 0 0 22px">
+                      {#each r.ftp_errors as e}<li>{e}</li>{/each}
+                    </ul>
+                  {/if}
+                </div>
+                <div style="display:flex;justify-content:flex-end;margin-top:12px">
+                  <button class="btn-save" on:click={closeDeleteTorrentModal}>Fermer</button>
+                </div>
+              {/if}
+            </div>
+          </div>
+        {/if}
 
         <!-- Modal résultat du check MKV local -->
         {#if localMkvCheck}
@@ -2240,11 +2356,14 @@
         </div>
       </div>
 
-    <!-- ===== API ===== -->
-    {:else if activeTab === 'api'}
+    <!-- ===== RÉGLAGES (fusion API + config) ===== -->
+    {:else if activeTab === 'settings'}
       <div class="tab-content">
-        <h2>Clés API</h2>
+        <h2>Réglages</h2>
         <div class="sections">
+
+          <!-- ===== Clés API ===== -->
+          <div style="font-size:11px;color:var(--text3);margin:0 0 8px;text-transform:uppercase;letter-spacing:0.5px">🔑 Clés API</div>
 
           <div class="section">
             <div class="section-header">
@@ -2271,17 +2390,32 @@
 
           <div class="section">
             <div class="section-header">
-              <span>TMDB</span>
-              <button class="btn-test" on:click={() => runTest('tmdb', () => TestTMDB(cfg.tmdb_api_key))}>
+              <span>🔒 TMDB (verrouillé)</span>
+              <button class="btn-test" on:click={() => runTest('tmdb', () => TestTMDB(''))}>
                 {#if testLoading.tmdb}…{:else}Tester{/if}
               </button>
             </div>
             {#if testResults.tmdb}
               <div class="test-result" class:ok={testResults.tmdb.ok}>{testResults.tmdb.message}</div>
             {/if}
+            <div style="color:var(--text3);font-size:12px;line-height:1.5;margin-bottom:8px">
+              ✅ Recherche TMDB via le proxy configuré — pas de clé requise.<br>
+              Bonus : notes IMDb fusionnées + lookup par IMDb ID + watch providers (Netflix/Disney+…).
+            </div>
             <div class="field">
-              <label>Clé API TMDB</label>
-              <input type="password" bind:value={cfg.tmdb_api_key} placeholder="API key" />
+              <label>Index de recherche TMDB (proxy URL)</label>
+              <input type="password" value={cfg.tmdb_proxy_url} disabled readonly />
+              <div class="field-hint">URL imposée par la team — non modifiable.</div>
+            </div>
+            <div class="field">
+              <label>Index de recherche LiHDL (par nom de fichier)</label>
+              <input type="password" value={cfg.media_search_url} disabled readonly />
+              <div class="field-hint">Endpoint custom imposé par la team — non modifiable.</div>
+            </div>
+            <div class="field">
+              <label>Clé API TMDB (fallback)</label>
+              <input type="password" value={cfg.tmdb_api_key} disabled readonly placeholder="— non configurée —" />
+              <div class="field-hint">Non utilisée tant que le proxy fonctionne. Imposée par la team.</div>
             </div>
           </div>
 
@@ -2317,30 +2451,40 @@
             </div>
           </div>
 
-        </div>
-
-        <button class="btn-save" on:click={saveConfig}>
-          {cfgSaved ? '✓ Sauvegardé' : 'Sauvegarder'}
-        </button>
-      </div>
-
-    <!-- ===== RÉGLAGES ===== -->
-    {:else if activeTab === 'settings'}
-      <div class="tab-content">
-        <h2>Réglages</h2>
-        <div class="sections">
-
-          <!-- Proxy HTTP -->
           <div class="section">
-            <div class="section-header"><span>🌐 Proxy HTTP (optionnel)</span></div>
+            <div class="section-header">
+              <span>Nexum (tracker secondaire)</span>
+              <button class="btn-test" on:click={async () => {
+                testLoading = { ...testLoading, nexum: true }
+                try {
+                  const msg = await TestNexum()
+                  testResults = { ...testResults, nexum: { ok: true, message: msg } }
+                } catch(e) {
+                  testResults = { ...testResults, nexum: { ok: false, message: String(e?.message || e) } }
+                }
+                testLoading = { ...testLoading, nexum: false }
+              }}>
+                {#if testLoading.nexum}…{:else}Tester{/if}
+              </button>
+            </div>
+            {#if testResults.nexum}
+              <div class="test-result" class:ok={testResults.nexum.ok}>{testResults.nexum.message}</div>
+            {/if}
             <div class="field">
-              <label>URL du proxy</label>
-              <input type="text" bind:value={cfg.proxy_url} placeholder="http://user:pass@host:port ou socks5://host:1080 (vide = pas de proxy)" />
+              <label>URL Nexum</label>
+              <input type="text" bind:value={cfg.nexum_base_url} placeholder="https://nexum-core.com" />
+            </div>
+            <div class="field">
+              <label>Clé API Nexum (X-API-Key)</label>
+              <input type="password" bind:value={cfg.nexum_api_key} placeholder="Génère ta clé dans Paramètres → Clé API sur Nexum" />
               <div style="color:var(--text3);font-size:11px;margin-top:4px">
-                Applique un proxy HTTP/HTTPS à <b>toutes</b> les requêtes (Hydracker, TMDB, 1fichier, GitHub update…). Formats supportés : <code>http://host:port</code>, <code>http://user:pass@host:port</code>, <code>socks5://host:port</code>. Effectif après avoir cliqué "Enregistrer".
+                Optionnel — si renseigné, Check Torrent affichera aussi tes stats Nexum (id, seeds, date) à côté de Hydracker.
               </div>
             </div>
           </div>
+
+          <!-- ===== Configuration ===== -->
+          <div style="font-size:11px;color:var(--text3);margin:18px 0 8px;text-transform:uppercase;letter-spacing:0.5px">⚙️ Configuration</div>
 
           <!-- Usenet -->
           <div class="section">
@@ -2414,32 +2558,24 @@
           </div>
 
 
-          <!-- LiHDL Index (URL + Basic Auth) — protégée par mot de passe -->
+          <!-- LiHDL Index (URL + Basic Auth) — verrouillé par mdp admin -->
           <div class="section">
             <div class="section-header">
-              <span>🔒 Index + recherche TMDB</span>
+              <span>🔒 Index + recherche TMDB {#if !lihdlUnlocked}(admin){/if}</span>
               {#if lihdlUnlocked}
                 <div style="display:flex;gap:6px">
-                  {#if !lihdlManaged}
-                    <button class="btn-test" on:click={() => { lihdlPwdInput=''; lihdlPwdCurrent=''; lihdlPwdNew=''; lihdlPwdConfirm=''; lihdlPwdError=''; lihdlModal='change' }}>Changer mdp</button>
-                    {#if lihdlHasPassword}
-                      <button class="btn-test" on:click={() => { lihdlPwdInput=''; lihdlPwdCurrent=''; lihdlPwdError=''; lihdlModal='remove' }}>Retirer mdp</button>
-                    {/if}
-                  {/if}
-                  <button class="btn-test" on:click={() => { lihdlUnlocked = false }}>Re-verrouiller</button>
+                  <button class="btn-test" on:click={() => { lihdlUnlocked = false }}>🔒 Re-verrouiller</button>
                   <button class="btn-test" on:click={() => runTest('lihdl', () => TestLihdl(cfg.lihdl_base_url, cfg.lihdl_user, cfg.lihdl_password))}>
                     {#if testLoading.lihdl}…{:else}Tester{/if}
                   </button>
                 </div>
               {:else}
-                <button class="btn-test" on:click={openLihdlLockModal}>
-                  {lihdlHasPassword ? '🔓 Déverrouiller' : '🔐 Définir mdp'}
-                </button>
+                <button class="btn-test" on:click={openLihdlLockModal}>🔓 Déverrouiller</button>
               {/if}
             </div>
             {#if !lihdlUnlocked}
               <div class="locked-box">
-                Section protégée — {lihdlHasPassword ? 'entre le mot de passe pour voir et éditer.' : 'définis un mot de passe pour accéder aux URL et credentials.'}
+                Section admin — entre le mot de passe partagé pour accéder à l'index LiHDL et la recherche TMDB custom. Si tu n'es pas admin, pas besoin : l'API TMDB et la recherche Hydracker suffisent.
               </div>
             {:else}
               {#if testResults.lihdl}
@@ -2494,40 +2630,17 @@
             </div>
           </div>
 
-          <!-- ===== Sections seedbox/FTP — protégées par mot de passe partagé entre admins ===== -->
-          {#if seedboxHasPassword && !seedboxUnlocked}
-            <div class="section" style="text-align:center;padding:24px;border:1px dashed rgba(255,214,10,0.35);background:rgba(255,214,10,0.04)">
-              <div style="font-size:14px;color:var(--yellow);margin-bottom:14px">🔒 Sections seedbox / FTP / Tracker Torrent verrouillées</div>
-              <button class="btn-save" on:click={openSeedboxLockModal}>🔓 Déverrouiller</button>
-            </div>
-          {:else}
-          {#if seedboxHasPassword && seedboxUnlocked}
-            <div style="margin:0 0 14px;padding:8px 14px;background:rgba(126,240,192,0.08);border:1px solid rgba(126,240,192,0.25);border-radius:8px;display:flex;justify-content:space-between;align-items:center">
-              <span style="color:#7ef0c0;font-size:12px">🔓 Sections seedbox déverrouillées (session en cours)</span>
-              <div style="display:flex;gap:6px">
-                <button class="btn-test" on:click={() => { seedboxPwdInput=''; seedboxPwdCurrent=''; seedboxPwdNew=''; seedboxPwdConfirm=''; seedboxPwdError=''; seedboxModal='change' }}>Changer mdp</button>
-                <button class="btn-test" on:click={() => { seedboxPwdInput=''; seedboxPwdCurrent=''; seedboxPwdNew=''; seedboxPwdConfirm=''; seedboxPwdError=''; seedboxModal='remove' }}>Retirer</button>
-                <button class="btn-test" on:click={() => seedboxUnlocked = false}>🔒 Re-verrouiller</button>
-              </div>
-            </div>
-          {:else if !seedboxHasPassword}
-            <div style="margin:0 0 14px;padding:8px 14px;background:rgba(0,180,216,0.05);border:1px solid rgba(0,180,216,0.2);border-radius:8px;display:flex;justify-content:space-between;align-items:center">
-              <span style="color:var(--text2);font-size:12px">🔓 Sections seedbox non protégées</span>
-              <button class="btn-test" on:click={openSeedboxLockModal}>🔒 Définir un mot de passe</button>
-            </div>
-          {/if}
-
-          <!-- Torrent (tracker URL + piece size) -->
+          <!-- Torrent (tracker URL + piece size) — verrouillé, imposé au build -->
           <div class="section">
-            <div class="section-header"><span>Torrent</span></div>
+            <div class="section-header"><span>🔒 Torrent (verrouillé)</span></div>
             <div class="field">
               <label for="tracker-url">URL tracker Hydracker (announce)</label>
-              <input id="tracker-url" type="text" bind:value={cfg.tracker_url} placeholder="https://hydracker.com/announce/TOKEN" />
+              <input id="tracker-url" type="text" value={cfg.tracker_url} disabled readonly />
             </div>
             <div class="field">
               <label for="torrent-piece">Piece size (octets)</label>
-              <input id="torrent-piece" type="number" bind:value={cfg.torrent_piece_size} step="1048576" />
-              <div class="field-hint">8 MiB = 8388608 · 4 MiB = 4194304 · 16 MiB = 16777216</div>
+              <input id="torrent-piece" type="number" value={cfg.torrent_piece_size} disabled readonly />
+              <div class="field-hint">Valeur imposée par la team — non modifiable.</div>
             </div>
           </div>
 
@@ -2691,8 +2804,6 @@
               </div>
             </div>
           </div>
-          {/if}
-          <!-- ===== Fin sections protégées ===== -->
 
         </div>
 
@@ -3232,6 +3343,71 @@
     min-width: 28px; padding: 4px 8px !important;
     font-size: 13px; font-weight: bold;
   }
+
+  /* === Stats uploaders (table) === */
+  .stats-header {
+    display: flex; justify-content: space-between; align-items: flex-start;
+    gap: 16px; margin: 8px 0 18px; flex-wrap: wrap;
+  }
+  .stats-title { margin: 0 0 4px; font-size: 16px; font-weight: 600; color: var(--text); }
+  .stats-sub { color: var(--text3); font-size: 11.5px; line-height: 1.5; max-width: 720px; }
+
+  .upl-table-wrap {
+    background: rgba(255,255,255,0.02);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow: hidden;
+  }
+  .upl-table {
+    width: 100%; border-collapse: collapse;
+  }
+  .upl-table thead tr {
+    background: linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.02));
+    border-bottom: 2px solid var(--border-strong);
+  }
+  .upl-table th {
+    padding: 11px 12px;
+    text-align: left;
+    font-size: 11px; font-weight: 600; color: var(--text);
+    letter-spacing: 0.3px;
+    text-transform: uppercase;
+    white-space: nowrap;
+  }
+  .upl-th-rank { width: 50px; text-align: center !important; }
+  .upl-th-num { text-align: right !important; }
+  .upl-th-sort { cursor: pointer; user-select: none; transition: background 0.12s; }
+  .upl-th-sort:hover { background: rgba(255,255,255,0.04); }
+
+  .upl-row {
+    cursor: pointer;
+    transition: background 0.12s;
+    border-bottom: 1px solid rgba(255,255,255,0.04);
+  }
+  .upl-row:hover { background: rgba(0, 180, 216, 0.06); }
+  .upl-row:last-child { border-bottom: none; }
+  .upl-podium { background: rgba(255, 214, 10, 0.03); }
+  .upl-podium:hover { background: rgba(255, 214, 10, 0.08); }
+
+  .upl-table td {
+    padding: 9px 12px;
+    font-size: 12.5px; color: var(--text);
+  }
+  .upl-rank {
+    text-align: center;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    color: var(--text3); font-weight: 700; font-size: 13px;
+    width: 50px;
+  }
+  .upl-author {
+    font-weight: 600;
+  }
+  .upl-num { text-align: right; font-variant-numeric: tabular-nums; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+  .upl-c-torrent { color: #fb923c; }
+  .upl-c-nzb     { color: #60a5fa; }
+  .upl-c-ddl     { color: #7ef0c0; }
+  .upl-c-total   { font-weight: 700; color: var(--text); font-size: 13px; }
+  .upl-c-size    { color: var(--text3); }
+  .upl-date      { color: var(--text3); font-size: 11px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; white-space: nowrap; }
 
   /* === Modale NFO === */
   .nfo-modal-bg {

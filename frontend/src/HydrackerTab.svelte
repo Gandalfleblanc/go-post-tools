@@ -1,7 +1,7 @@
 <script>
   import { onMount, onDestroy } from 'svelte'
   import { EventsOn, EventsOff, OnFileDrop, OnFileDropOff } from '../wailsjs/runtime/runtime.js'
-  import { ParseFilename, TMDBSearch, TMDBGetByID, HydrackerSearch, HydrackerGetByTmdbID, HydrackerGetByID, OpenBrowser, OpenHydrackerAdmin, SelectMkvFile, SelectMkvFiles, PostTorrentWorkflow, PostExistingTorrent, PostNzbWorkflow, PostDDLWorkflow, FetchImageBase64, GetMetaQualities, GetMetaLangs, GetMetaSubs, GetFileSize, ReadFileChunk, MediaSearch, CancelAllWorkflows, Notify, CancelDDLHost, SkipCurrentEpisode, IsTorrentAdminAcknowledged, AcknowledgeTorrentAdmin } from '../wailsjs/go/main/App.js'
+  import { ParseFilename, TMDBSearch, TMDBGetByID, HydrackerSearch, HydrackerGetByTmdbID, HydrackerGetByID, OpenBrowser, OpenHydrackerAdmin, SelectMkvFile, SelectMkvFiles, PostTorrentWorkflow, PostExistingTorrent, PostNzbWorkflow, PostDDLWorkflow, FetchImageBase64, GetMetaQualities, GetMetaLangs, GetMetaSubs, GetFileSize, ReadFileChunk, MediaSearch, CancelAllWorkflows, Notify, CancelDDLHost, SkipCurrentEpisode, IsTorrentAdminAcknowledged } from '../wailsjs/go/main/App.js'
   import { addLog } from './logs.js'
   import { LANGUAGES as HYD_LANGUAGES, SUBS as HYD_SUBS } from './hydrackerData.js'
 
@@ -43,39 +43,10 @@
   let langsAutoFilled = false
   let subsAutoFilled = false
   let postUploadTypes = { nzb: false, torrent_admin: false, torrent_modo: true, ddl: false }
-  // Torrent ADMIN est gardé par un mot de passe (une fois acknowledge, jamais redemandé)
+  // Torrent ADMIN n'est visible que pour les admins (= ceux qui ont déverrouillé
+  // la section Seedbox dans Réglages avec le mdp partagé).
   let adminAcknowledged = false
-  let adminLockModal = false
-  let adminPwdInput = ''
-  let adminPwdError = ''
-  let adminLockLoading = false
 
-  // Tente d'activer la checkbox Torrent ADMIN. Si l'acknowledge n'a pas été
-  // fait, ouvre la modal pour que l'user tape le mdp une fois pour toute.
-  function tryEnableTorrentAdmin() {
-    if (adminAcknowledged) {
-      postUploadTypes = { ...postUploadTypes, torrent_admin: true, torrent_modo: false }
-      return
-    }
-    adminPwdInput = ''
-    adminPwdError = ''
-    adminLockModal = true
-  }
-
-  async function submitAdminPwd() {
-    adminLockLoading = true
-    adminPwdError = ''
-    try {
-      await AcknowledgeTorrentAdmin(adminPwdInput)
-      adminAcknowledged = true
-      adminLockModal = false
-      // Active direct la checkbox après validation
-      postUploadTypes = { ...postUploadTypes, torrent_admin: true, torrent_modo: false }
-    } catch(e) {
-      adminPwdError = String(e?.message || e).replace('Error: ', '')
-    }
-    adminLockLoading = false
-  }
   let postDdlHosts = { onefichier: true, sendcm: true }
   let postSeason = 0
   let postEpisode = 0
@@ -191,7 +162,15 @@
     window.addEventListener('watch:newfile', onWatchNewFile)
     window.addEventListener('hydracker:preload-torrent', onPreloadTorrent)
     window.addEventListener('keydown', onKeydown)
+    window.addEventListener('admin-unlocked', onAdminUnlocked)
   })
+
+  // Quand l'user déverrouille la section Seedbox dans Réglages avec le mdp
+  // partagé, App.svelte dispatch 'admin-unlocked' → on rafraîchit le flag
+  // pour que la checkbox Torrent ADMIN apparaisse immédiatement.
+  async function onAdminUnlocked() {
+    try { adminAcknowledged = await IsTorrentAdminAcknowledged() } catch(e) {}
+  }
 
   // Raccourcis clavier globaux (hors champs texte)
   function onKeydown(e) {
@@ -373,6 +352,7 @@
     OnFileDropOff()
     window.removeEventListener('watch:newfile', onWatchNewFile)
     window.removeEventListener('hydracker:preload-torrent', onPreloadTorrent)
+    window.removeEventListener('admin-unlocked', onAdminUnlocked)
     window.removeEventListener('keydown', onKeydown)
   })
 
@@ -1493,15 +1473,9 @@
                 <label class="check-label"><input type="checkbox" checked={postUploadTypes.torrent_admin}
                   on:change={(e) => {
                     const v = e.currentTarget.checked
-                    if (v && !adminAcknowledged) {
-                      // Bloque le check tant que mdp pas validé, ouvre modal
-                      e.currentTarget.checked = false
-                      tryEnableTorrentAdmin()
-                    } else {
-                      postUploadTypes = { ...postUploadTypes, torrent_admin: v, torrent_modo: v ? false : postUploadTypes.torrent_modo }
-                    }
+                    postUploadTypes = { ...postUploadTypes, torrent_admin: v, torrent_modo: v ? false : postUploadTypes.torrent_modo }
                   }} />
-                  Torrent ADMIN {#if !adminAcknowledged}🔒{/if}
+                  Torrent ADMIN
                 </label>
                 <label class="check-label"><input type="checkbox" checked={postUploadTypes.torrent_modo}
                   on:change={(e) => { const v = e.currentTarget.checked; postUploadTypes = { ...postUploadTypes, torrent_modo: v, torrent_admin: v ? false : postUploadTypes.torrent_admin } }} />
@@ -1512,10 +1486,9 @@
                 <button class="btn-full-auto" class:active={postUploadTypes.torrent_admin && postUploadTypes.nzb && postUploadTypes.ddl}
                   on:click={() => {
                     const on = !(postUploadTypes.torrent_admin && postUploadTypes.nzb && postUploadTypes.ddl)
-                    if (on && !adminAcknowledged) { tryEnableTorrentAdmin(); return }
                     postUploadTypes = { torrent_admin: on, torrent_modo: false, nzb: on, ddl: on }
                   }}>
-                  ⚡ Full Auto (ADMIN) {#if !adminAcknowledged}🔒{/if}
+                  ⚡ Full Auto (ADMIN)
                 </button>
               </div>
             </div>
@@ -1763,31 +1736,6 @@
   </div>
   {/if}
 </div>
-
-<!-- Modal mdp — débloque "Torrent ADMIN" une seule fois pour toutes -->
-{#if adminLockModal}
-  <div class="admin-modal-bg" on:click|self={() => adminLockModal = false}>
-    <div class="admin-modal-card">
-      <div style="font-size:14px;font-weight:600;color:var(--text);margin-bottom:8px">🔒 Torrent ADMIN verrouillé</div>
-      <div style="color:var(--text3);font-size:12px;margin-bottom:12px">
-        Entre le mot de passe partagé pour débloquer l'option "Torrent ADMIN". Ce sera demandé UNE seule fois, puis enregistré pour toujours.
-      </div>
-      <form on:submit|preventDefault={submitAdminPwd}>
-        <input type="password" bind:value={adminPwdInput} placeholder="Mot de passe" autocomplete="off"
-          style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:6px;background:rgba(0,0,0,0.3);color:var(--text);font-size:13px" />
-        {#if adminPwdError}
-          <div style="color:#ff6b6b;font-size:11px;margin-top:6px">✗ {adminPwdError}</div>
-        {/if}
-        <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px">
-          <button type="button" class="btn-cancel" on:click={() => adminLockModal = false}>Annuler</button>
-          <button type="submit" class="btn-start" disabled={adminLockLoading || !adminPwdInput}>
-            {adminLockLoading ? '…' : 'Valider'}
-          </button>
-        </div>
-      </form>
-    </div>
-  </div>
-{/if}
 
 <style>
   .admin-modal-bg {

@@ -39,6 +39,8 @@ export function DeleteNzb(arg1:number):Promise<void>;
 
 export function DeleteTorrent(arg1:number):Promise<void>;
 
+export function DeleteTorrentAndFTP(arg1:number):Promise<main.DeleteTorrentResult>;
+
 export function DownloadToDownloads(arg1:string,arg2:string):Promise<string>;
 
 export function DownloadUpdate():Promise<string>;
@@ -66,6 +68,10 @@ export function GetMetaQualities():Promise<Array<api.Quality>>;
 export function GetMetaSubs():Promise<Array<api.Lang>>;
 
 export function GetMyUsername():Promise<string>;
+
+export function GetNexumIndex():Promise<main.NexumIndex>;
+
+export function GetUploaderStats(arg1:number):Promise<main.UploaderScanResult>;
 
 export function GetUserProfile(arg1:string):Promise<api.User>;
 
@@ -104,6 +110,8 @@ export function ListMyLiens(arg1:string,arg2:number):Promise<api.AdminLiensRespo
 export function ListMyTorrents(arg1:string,arg2:number):Promise<api.AdminTorrentsResponse>;
 
 export function ListReseedRequests(arg1:string,arg2:number,arg3:number,arg4:number):Promise<api.ReseedRequestsResponse>;
+
+export function ListSeedboxHashes():Promise<Array<string>>;
 
 export function ListTitlesSorted(arg1:string,arg2:number,arg3:number):Promise<api.TitlesResponse>;
 
@@ -163,6 +171,10 @@ export function StopWatchFolder():Promise<void>;
 
 export function TMDBGetByID(arg1:number,arg2:string):Promise<tmdb.Movie>;
 
+export function TMDBGetByImdbID(arg1:string):Promise<tmdb.Movie>;
+
+export function TMDBGetProviders(arg1:number,arg2:string):Promise<Record<string, tmdb.CountryProviders>>;
+
 export function TMDBSearch(arg1:string):Promise<Array<tmdb.Movie>>;
 
 export function TestFTP(arg1:string,arg2:number,arg3:string,arg4:string):Promise<tester.Result>;
@@ -172,6 +184,8 @@ export function TestHydracker(arg1:string,arg2:string):Promise<tester.Result>;
 export function TestLihdl(arg1:string,arg2:string,arg3:string):Promise<tester.Result>;
 
 export function TestModSeedbox(arg1:string,arg2:string,arg3:string):Promise<tester.Result>;
+
+export function TestNexum():Promise<string>;
 
 export function TestOneFichier(arg1:string):Promise<tester.Result>;
 

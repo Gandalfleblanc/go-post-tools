@@ -51,6 +51,50 @@ func (c *Client) ListAdminLiens(idUser string, page int) (*AdminLiensResponse, e
 	return &resp, nil
 }
 
+// AdminNzbItem est l'item renvoyé par /admin/nzb. Le champ author existe ici
+// (contrairement à Nzb qui utilise id_user) — on garde donc une struct dédiée.
+type AdminNzbItem struct {
+	ID        int    `json:"id"`
+	TitleID   int    `json:"title_id"`
+	Name      string `json:"name"`
+	Author    string `json:"author"`
+	Quality   int    `json:"qualite"`
+	Season    int    `json:"saison"`
+	Episode   int    `json:"episode"`
+	Size      int64  `json:"taille"`
+	TotalParts int   `json:"total_parts"`
+	CreatedAt string `json:"created_at"`
+}
+
+type AdminNzbsResponse struct {
+	Pagination struct {
+		CurrentPage int            `json:"current_page"`
+		NextPage    *int           `json:"next_page"`
+		Total       int            `json:"total,omitempty"`
+		Data        []AdminNzbItem `json:"data"`
+	} `json:"pagination"`
+}
+
+// ListAdminNzbs — /admin/nzb (singular!) paginé. author filtre par pseudo.
+func (c *Client) ListAdminNzbs(author string, page int) (*AdminNzbsResponse, error) {
+	params := url.Values{}
+	if author != "" {
+		params.Set("author", author)
+	}
+	if page > 0 {
+		params.Set("page", strconv.Itoa(page))
+	}
+	data, err := c.get("/admin/nzb", params)
+	if err != nil {
+		return nil, err
+	}
+	var resp AdminNzbsResponse
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return nil, fmt.Errorf("parse /admin/nzb: %w", err)
+	}
+	return &resp, nil
+}
+
 // ListAdminTorrents — /admin/torrents paginé. uploader filtre par pseudo.
 func (c *Client) ListAdminTorrents(uploader string, page int) (*AdminTorrentsResponse, error) {
 	params := url.Values{}

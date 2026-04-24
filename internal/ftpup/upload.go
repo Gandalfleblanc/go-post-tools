@@ -161,3 +161,49 @@ func Upload(ctx context.Context, host string, port int, user, password, remotePa
 	}
 	return remoteName, nil
 }
+
+// Delete supprime un fichier sur le FTP. Retourne nil si fichier supprimé OU
+// déjà absent (DELE renvoie 550 sur fichier inexistant — on traite comme succès).
+func Delete(host string, port int, user, password, remotePath, remoteName string) error {
+	if host == "" {
+		return fmt.Errorf("host FTP manquant")
+	}
+	if port <= 0 {
+		port = 21
+	}
+	addr := fmt.Sprintf("%s:%d", host, port)
+	c, err := ftp.Dial(addr, ftp.DialWithTimeout(15*time.Second))
+	if err != nil {
+		return fmt.Errorf("connexion FTP: %w", err)
+	}
+	defer c.Quit()
+
+	if err := c.Login(user, password); err != nil {
+		return fmt.Errorf("login FTP: %w", err)
+	}
+	if remotePath != "" && remotePath != "/" {
+		if err := c.ChangeDir(remotePath); err != nil {
+			return fmt.Errorf("cd %s: %w", remotePath, err)
+		}
+	}
+	if err := c.Delete(remoteName); err != nil {
+		// 550 = fichier inexistant → on considère que c'est OK (déjà supprimé)
+		es := err.Error()
+		if containsAny(es, []string{"550", "not found", "No such"}) {
+			return nil
+		}
+		return fmt.Errorf("DELE %s: %w", remoteName, err)
+	}
+	return nil
+}
+
+func containsAny(s string, subs []string) bool {
+	for _, sub := range subs {
+		for i := 0; i+len(sub) <= len(s); i++ {
+			if s[i:i+len(sub)] == sub {
+				return true
+			}
+		}
+	}
+	return false
+}

@@ -12,6 +12,7 @@ package qbittorrent
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -180,6 +181,81 @@ func isPresent(ctx context.Context, c *http.Client, baseURL, hash string) bool {
 	// Si pas trouvé → "[]".
 	trimmed := strings.TrimSpace(string(body))
 	return resp.StatusCode == 200 && trimmed != "" && trimmed != "[]"
+}
+
+// ListHashes retourne tous les info_hashes (lowercase) présents sur qBit.
+// Utilisé par Check Torrent pour ne montrer que les torrents que l'user
+// a réellement encore en seed (filtre sa liste Hydracker).
+func ListHashes(baseURL, user, password string) ([]string, error) {
+	if baseURL == "" {
+		return nil, fmt.Errorf("URL qBit manquante")
+	}
+	c := newClient()
+	ctx := context.Background()
+	if err := login(ctx, c, baseURL, user, password); err != nil {
+		return nil, err
+	}
+	u := strings.TrimRight(baseURL, "/") + "/api/v2/torrents/info"
+	req, _ := http.NewRequestWithContext(ctx, "GET", u, nil)
+	req.Header.Set("Referer", strings.TrimRight(baseURL, "/"))
+	req.Header.Set("User-Agent", "GoPostTools/4.x")
+	resp, err := c.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("list qbit: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("list qbit HTTP %d", resp.StatusCode)
+	}
+	var items []struct {
+		Hash string `json:"hash"`
+	}
+	body, _ := io.ReadAll(resp.Body)
+	if err := json.Unmarshal(body, &items); err != nil {
+		return nil, fmt.Errorf("parse qbit list: %w", err)
+	}
+	out := make([]string, 0, len(items))
+	for _, it := range items {
+		if it.Hash != "" {
+			out = append(out, strings.ToLower(it.Hash))
+		}
+	}
+	return out, nil
+}
+
+// Delete supprime un torrent de qBit. Si deleteFiles=true, supprime aussi
+// les fichiers sur disque. Idempotent (succès même si le hash n'existe pas).
+func Delete(baseURL, user, password, hash string, deleteFiles bool) error {
+	if baseURL == "" {
+		return fmt.Errorf("URL qBit manquante")
+	}
+	c := newClient()
+	ctx := context.Background()
+	if err := login(ctx, c, baseURL, user, password); err != nil {
+		return err
+	}
+	u := strings.TrimRight(baseURL, "/") + "/api/v2/torrents/delete"
+	form := url.Values{}
+	form.Set("hashes", strings.ToLower(hash))
+	if deleteFiles {
+		form.Set("deleteFiles", "true")
+	} else {
+		form.Set("deleteFiles", "false")
+	}
+	req, _ := http.NewRequestWithContext(ctx, "POST", u, strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Referer", strings.TrimRight(baseURL, "/"))
+	req.Header.Set("User-Agent", "GoPostTools/4.x")
+	resp, err := c.Do(req)
+	if err != nil {
+		return fmt.Errorf("delete qbit: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("delete qbit HTTP %d: %s", resp.StatusCode, string(body))
+	}
+	return nil
 }
 
 // Recheck force un recheck sur le torrent identifié par son info_hash.

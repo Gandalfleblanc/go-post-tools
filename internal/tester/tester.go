@@ -74,33 +74,22 @@ func TestHydracker(baseURL, token string) Result {
 	return Result{false, fmt.Sprintf("HTTP %d", resp.StatusCode)}
 }
 
+// TestTMDB ping le proxytmdb (pas besoin de clé). Le paramètre apiKey est
+// gardé pour compatibilité de signature mais ignoré.
 func TestTMDB(apiKey string) Result {
-	apiKey = strings.TrimSpace(apiKey)
-	if apiKey == "" {
-		return Result{false, "Clé vide — saisissez votre clé TMDB"}
-	}
+	_ = apiKey
 	c := &http.Client{Timeout: 10 * time.Second}
-
-	// Essai 1 : API Key v3 (paramètre)
-	req1, _ := http.NewRequest("GET", "https://api.themoviedb.org/3/configuration?api_key="+apiKey, nil)
-	if r1, err := c.Do(req1); err == nil {
-		r1.Body.Close()
-		if r1.StatusCode == 200 {
-			return ok("Clé TMDB v3 valide")
-		}
+	req, _ := http.NewRequest("GET", "https://tmdb.uklm.xyz/health", nil)
+	req.Header.Set("User-Agent", "GoPostTools/4.x")
+	resp, err := c.Do(req)
+	if err != nil {
+		return Result{false, fmt.Sprintf("Proxy TMDB injoignable: %v", err)}
 	}
-
-	// Essai 2 : Bearer Token v4
-	req2, _ := http.NewRequest("GET", "https://api.themoviedb.org/3/configuration", nil)
-	req2.Header.Set("Authorization", "Bearer "+apiKey)
-	if r2, err := c.Do(req2); err == nil {
-		r2.Body.Close()
-		if r2.StatusCode == 200 {
-			return ok("Bearer Token TMDB v4 valide")
-		}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return Result{false, fmt.Sprintf("Proxy TMDB HTTP %d", resp.StatusCode)}
 	}
-
-	return Result{false, fmt.Sprintf("Clé invalide — vérifiez sur themoviedb.org → Paramètres → API (longueur actuelle: %d caractères)", len(apiKey))}
+	return ok("Proxy TMDB (tmdb.uklm.xyz) OK — pas de clé requise")
 }
 
 func TestOneFichier(apiKey string) Result {

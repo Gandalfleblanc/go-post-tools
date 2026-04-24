@@ -123,6 +123,42 @@ func (c *Client) GetLiens(titleID int, f ContentFilter) (*LiensResult, error) {
 	return &resp, nil
 }
 
+// GlobalTorrentsResponse — pagination de /torrents (endpoint global, pas /admin).
+// Sert pour les stats site-wide : retourne tous les torrents triés par recency.
+type GlobalTorrentsResponse struct {
+	Pagination struct {
+		CurrentPage int           `json:"current_page"`
+		LastPage    int           `json:"last_page,omitempty"`
+		Total       int           `json:"total,omitempty"`
+		Data        []TorrentItem `json:"data"`
+	} `json:"pagination"`
+}
+
+// GetGlobalTorrents — /torrents (sans /admin) renvoie tous les torrents du site
+// (130k+), perPage jusqu'à 100 supporté, tri par created_at desc par défaut.
+func (c *Client) GetGlobalTorrents(page, perPage int) (*GlobalTorrentsResponse, error) {
+	if perPage <= 0 {
+		perPage = 100
+	}
+	if page <= 0 {
+		page = 1
+	}
+	params := url.Values{}
+	params.Set("page", fmt.Sprintf("%d", page))
+	params.Set("perPage", fmt.Sprintf("%d", perPage))
+	params.Set("orderBy", "created_at")
+	params.Set("orderDir", "desc")
+	data, err := c.get("/torrents", params)
+	if err != nil {
+		return nil, err
+	}
+	var resp GlobalTorrentsResponse
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return nil, fmt.Errorf("parse /torrents: %w", err)
+	}
+	return &resp, nil
+}
+
 // GetNfo récupère le NFO HTML d'un item via /{kind}/{id} qui retourne
 // {model: {nfo: "..."}}. kind = "torrents" | "liens" | "nzbs".
 func (c *Client) GetNfo(kind string, id int) (string, error) {

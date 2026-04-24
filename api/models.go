@@ -55,13 +55,14 @@ type User struct {
 // --- Titles ---
 
 type PartialTitle struct {
-	ID          int     `json:"id"`
-	Name        string  `json:"name"`
-	Type        string  `json:"type"`
-	Poster      string  `json:"poster,omitempty"`
-	ReleaseDate string  `json:"release_date,omitempty"`
-	Score       float64 `json:"score,omitempty"`
-	Runtime     int     `json:"runtime,omitempty"`
+	ID                 int     `json:"id"`
+	Name               string  `json:"name"`
+	Type               string  `json:"type"`
+	Poster             string  `json:"poster,omitempty"`
+	ReleaseDate        string  `json:"release_date,omitempty"`
+	Score              float64 `json:"score,omitempty"`
+	Runtime            int     `json:"runtime,omitempty"`
+	LastContentAddedAt string  `json:"last_content_added_at,omitempty"`
 }
 
 type FullTitle struct {
@@ -261,8 +262,9 @@ type Nzb struct {
 	Quality     int         `json:"qualite,omitempty"`
 	Season      int         `json:"saison,omitempty"`
 	Episode     int         `json:"episode,omitempty"`
-	Size        int64       `json:"taille,omitempty"`
+	Size        int64       `json:"size,omitempty"` // NZB API renvoie "size" (pas "taille")
 	IDUser      string      `json:"id_user,omitempty"`
+	Author      string      `json:"author,omitempty"` // /content/nzbs renvoie author, /admin/nzb aussi
 	Active      int         `json:"active,omitempty"`
 	CreatedAt   string      `json:"created_at,omitempty"`
 	UpdatedAt   string      `json:"updated_at,omitempty"`

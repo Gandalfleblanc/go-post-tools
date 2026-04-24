@@ -62,6 +62,10 @@ export function DeleteTorrent(arg1) {
   return window['go']['main']['App']['DeleteTorrent'](arg1);
 }
 
+export function DeleteTorrentAndFTP(arg1) {
+  return window['go']['main']['App']['DeleteTorrentAndFTP'](arg1);
+}
+
 export function DownloadToDownloads(arg1, arg2) {
   return window['go']['main']['App']['DownloadToDownloads'](arg1, arg2);
 }
@@ -116,6 +120,14 @@ export function GetMetaSubs() {
 
 export function GetMyUsername() {
   return window['go']['main']['App']['GetMyUsername']();
+}
+
+export function GetNexumIndex() {
+  return window['go']['main']['App']['GetNexumIndex']();
+}
+
+export function GetUploaderStats(arg1) {
+  return window['go']['main']['App']['GetUploaderStats'](arg1);
 }
 
 export function GetUserProfile(arg1) {
@@ -192,6 +204,10 @@ export function ListMyTorrents(arg1, arg2) {
 
 export function ListReseedRequests(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['ListReseedRequests'](arg1, arg2, arg3, arg4);
+}
+
+export function ListSeedboxHashes() {
+  return window['go']['main']['App']['ListSeedboxHashes']();
 }
 
 export function ListTitlesSorted(arg1, arg2, arg3) {
@@ -310,6 +326,14 @@ export function TMDBGetByID(arg1, arg2) {
   return window['go']['main']['App']['TMDBGetByID'](arg1, arg2);
 }
 
+export function TMDBGetByImdbID(arg1) {
+  return window['go']['main']['App']['TMDBGetByImdbID'](arg1);
+}
+
+export function TMDBGetProviders(arg1, arg2) {
+  return window['go']['main']['App']['TMDBGetProviders'](arg1, arg2);
+}
+
 export function TMDBSearch(arg1) {
   return window['go']['main']['App']['TMDBSearch'](arg1);
 }
@@ -328,6 +352,10 @@ export function TestLihdl(arg1, arg2, arg3) {
 
 export function TestModSeedbox(arg1, arg2, arg3) {
   return window['go']['main']['App']['TestModSeedbox'](arg1, arg2, arg3);
+}
+
+export function TestNexum() {
+  return window['go']['main']['App']['TestNexum']();
 }
 
 export function TestOneFichier(arg1) {

@@ -57,7 +57,8 @@ jobs:
         env:
           LIHDL_UNLOCK_HASH: ${{ secrets.LIHDL_UNLOCK_HASH }}
           HYDRACKER_URL: ${{ secrets.HYDRACKER_URL }}
-          MODO_UNLOCK_HASH: ${{ secrets.MODO_UNLOCK_HASH }}
+          TMDB_PROXY_URL: ${{ secrets.TMDB_PROXY_URL }}
+          MEDIA_SEARCH_URL: ${{ secrets.MEDIA_SEARCH_URL }}
           FTP_HOST: ${{ secrets.FTP_HOST }}
           FTP_USER: ${{ secrets.FTP_USER }}
           FTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
@@ -78,7 +79,8 @@ jobs:
           wails build -platform darwin/${{ matrix.arch }} -ldflags "-s -w \
             -X 'go-post-tools/internal/config.DefaultLihdlUnlockHash=${LIHDL_UNLOCK_HASH}' \
             -X 'go-post-tools/internal/config.DefaultHydrackerBaseURL=${HYDRACKER_URL}' \
-            -X 'go-post-tools/internal/config.DefaultSeedboxUnlockHash=${MODO_UNLOCK_HASH}' \
+            -X 'go-post-tools/internal/config.DefaultTMDBProxyURL=${TMDB_PROXY_URL}' \
+            -X 'go-post-tools/internal/config.DefaultMediaSearchURL=${MEDIA_SEARCH_URL}' \
             -X 'go-post-tools/internal/config.DefaultFTPHost=${FTP_HOST}' \
             -X 'go-post-tools/internal/config.DefaultFTPUser=${FTP_USER}' \
             -X 'go-post-tools/internal/config.DefaultFTPPassword=${FTP_PASSWORD}' \
@@ -141,7 +143,8 @@ jobs:
         env:
           LIHDL_UNLOCK_HASH: ${{ secrets.LIHDL_UNLOCK_HASH }}
           HYDRACKER_URL: ${{ secrets.HYDRACKER_URL }}
-          MODO_UNLOCK_HASH: ${{ secrets.MODO_UNLOCK_HASH }}
+          TMDB_PROXY_URL: ${{ secrets.TMDB_PROXY_URL }}
+          MEDIA_SEARCH_URL: ${{ secrets.MEDIA_SEARCH_URL }}
           FTP_HOST: ${{ secrets.FTP_HOST }}
           FTP_USER: ${{ secrets.FTP_USER }}
           FTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
@@ -162,7 +165,8 @@ jobs:
           wails build -platform linux/amd64 -tags webkit2_41 -ldflags "-s -w \
             -X 'go-post-tools/internal/config.DefaultLihdlUnlockHash=${LIHDL_UNLOCK_HASH}' \
             -X 'go-post-tools/internal/config.DefaultHydrackerBaseURL=${HYDRACKER_URL}' \
-            -X 'go-post-tools/internal/config.DefaultSeedboxUnlockHash=${MODO_UNLOCK_HASH}' \
+            -X 'go-post-tools/internal/config.DefaultTMDBProxyURL=${TMDB_PROXY_URL}' \
+            -X 'go-post-tools/internal/config.DefaultMediaSearchURL=${MEDIA_SEARCH_URL}' \
             -X 'go-post-tools/internal/config.DefaultFTPHost=${FTP_HOST}' \
             -X 'go-post-tools/internal/config.DefaultFTPUser=${FTP_USER}' \
             -X 'go-post-tools/internal/config.DefaultFTPPassword=${FTP_PASSWORD}' \
@@ -213,7 +217,8 @@ jobs:
         env:
           LIHDL_UNLOCK_HASH: ${{ secrets.LIHDL_UNLOCK_HASH }}
           HYDRACKER_URL: ${{ secrets.HYDRACKER_URL }}
-          MODO_UNLOCK_HASH: ${{ secrets.MODO_UNLOCK_HASH }}
+          TMDB_PROXY_URL: ${{ secrets.TMDB_PROXY_URL }}
+          MEDIA_SEARCH_URL: ${{ secrets.MEDIA_SEARCH_URL }}
           FTP_HOST: ${{ secrets.FTP_HOST }}
           FTP_USER: ${{ secrets.FTP_USER }}
           FTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
@@ -234,7 +239,8 @@ jobs:
           wails build -platform windows/amd64 -nsis -ldflags "-s -w \
             -X 'go-post-tools/internal/config.DefaultLihdlUnlockHash=${LIHDL_UNLOCK_HASH}' \
             -X 'go-post-tools/internal/config.DefaultHydrackerBaseURL=${HYDRACKER_URL}' \
-            -X 'go-post-tools/internal/config.DefaultSeedboxUnlockHash=${MODO_UNLOCK_HASH}' \
+            -X 'go-post-tools/internal/config.DefaultTMDBProxyURL=${TMDB_PROXY_URL}' \
+            -X 'go-post-tools/internal/config.DefaultMediaSearchURL=${MEDIA_SEARCH_URL}' \
             -X 'go-post-tools/internal/config.DefaultFTPHost=${FTP_HOST}' \
             -X 'go-post-tools/internal/config.DefaultFTPUser=${FTP_USER}' \
             -X 'go-post-tools/internal/config.DefaultFTPPassword=${FTP_PASSWORD}' \

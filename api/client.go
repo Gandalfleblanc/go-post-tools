@@ -34,9 +34,31 @@ type Client struct {
 	ctxMu      sync.Mutex
 	ctx        context.Context
 
+	// Rate limit Hydracker = 1 req/s par token (hard cap, doc API).
+	// On serialize tous les appels et on garantit min 1.05s entre 2 requêtes.
+	rateMu       sync.Mutex
+	lastReqAt    time.Time
+
 	// OnRequestLog est appelé à la fin de chaque requête API (succès ou erreur).
 	// Permet à App de router les logs vers Wails events pour l'onglet Log API.
 	OnRequestLog func(entry APILogEntry)
+}
+
+// minInterval respecte le rate limit Hydracker (1 req/s par token).
+const minInterval = 1050 * time.Millisecond
+
+// waitRateLimit doit être appelé avant chaque requête. Bloque le temps
+// nécessaire pour ne pas dépasser 1 req/s.
+func (c *Client) waitRateLimit() {
+	c.rateMu.Lock()
+	defer c.rateMu.Unlock()
+	if !c.lastReqAt.IsZero() {
+		elapsed := time.Since(c.lastReqAt)
+		if elapsed < minInterval {
+			time.Sleep(minInterval - elapsed)
+		}
+	}
+	c.lastReqAt = time.Now()
 }
 
 func NewClient(token, baseURL string) *Client {
@@ -129,6 +151,7 @@ func (c *Client) do(method, path string, body any, params url.Values) ([]byte, e
 		req.Header.Set("Authorization", "Bearer "+c.token)
 	}
 
+	c.waitRateLimit()
 	start := time.Now()
 	resp, err := c.httpClient.Do(req)
 	duration := time.Since(start)

@@ -150,6 +150,44 @@ func Recheck(baseURL, user, password, hash string) error {
 	return nil
 }
 
+// Erase supprime un torrent de rTorrent (stops + d.erase). N'efface PAS les
+// fichiers sur disque (rTorrent ne le fait pas par défaut). Le caller doit
+// gérer la suppression FTP séparément.
+func Erase(baseURL, user, password, hash string) error {
+	if !strings.HasSuffix(baseURL, "/") {
+		baseURL += "/"
+	}
+	endpoint := baseURL + "plugins/httprpc/action.php"
+	for _, method := range []string{"d.stop", "d.close", "d.erase"} {
+		payload := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?><methodCall><methodName>%s</methodName><params><param><value><string>%s</string></value></param></params></methodCall>`, method, hash)
+		req, err := http.NewRequest("POST", endpoint, strings.NewReader(payload))
+		if err != nil {
+			return err
+		}
+		req.Header.Set("Content-Type", "text/xml; charset=UTF-8")
+		if user != "" {
+			req.SetBasicAuth(user, password)
+		}
+		c := &http.Client{Timeout: 30 * time.Second}
+		resp, err := c.Do(req)
+		if err != nil {
+			return fmt.Errorf("%s: %w", method, err)
+		}
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != 200 {
+			return fmt.Errorf("%s HTTP %d: %s", method, resp.StatusCode, string(body))
+		}
+		// d.erase peut renvoyer une fault si le torrent n'existe pas — on
+		// considère ça comme succès (idempotent).
+		if strings.Contains(string(body), "<fault>") && method != "d.erase" {
+			return fmt.Errorf("%s XML-RPC fault: %s", method, truncate(string(body), 200))
+		}
+		time.Sleep(300 * time.Millisecond)
+	}
+	return nil
+}
+
 func atoi(s string) int {
 	n := 0
 	for _, c := range s {

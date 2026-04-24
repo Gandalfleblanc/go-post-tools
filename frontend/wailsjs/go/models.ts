@@ -232,8 +232,9 @@ export namespace api {
 	    qualite?: number;
 	    saison?: number;
 	    episode?: number;
-	    taille?: number;
+	    size?: number;
 	    id_user?: string;
+	    author?: string;
 	    active?: number;
 	    created_at?: string;
 	    updated_at?: string;
@@ -254,8 +255,9 @@ export namespace api {
 	        this.qualite = source["qualite"];
 	        this.saison = source["saison"];
 	        this.episode = source["episode"];
-	        this.taille = source["taille"];
+	        this.size = source["size"];
 	        this.id_user = source["id_user"];
+	        this.author = source["author"];
 	        this.active = source["active"];
 	        this.created_at = source["created_at"];
 	        this.updated_at = source["updated_at"];
@@ -326,6 +328,7 @@ export namespace api {
 	    release_date?: string;
 	    score?: number;
 	    runtime?: number;
+	    last_content_added_at?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new PartialTitle(source);
@@ -340,6 +343,7 @@ export namespace api {
 	        this.release_date = source["release_date"];
 	        this.score = source["score"];
 	        this.runtime = source["runtime"];
+	        this.last_content_added_at = source["last_content_added_at"];
 	    }
 	}
 	
@@ -848,8 +852,11 @@ export namespace config {
 	export class Config {
 	    hydracker_token: string;
 	    tmdb_api_key: string;
+	    tmdb_proxy_url: string;
 	    one_fichier_api_key: string;
 	    sendcm_api_key: string;
+	    nexum_api_key: string;
+	    nexum_base_url: string;
 	    usenet_host: string;
 	    usenet_port: number;
 	    usenet_ssl: boolean;
@@ -902,8 +909,11 @@ export namespace config {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.hydracker_token = source["hydracker_token"];
 	        this.tmdb_api_key = source["tmdb_api_key"];
+	        this.tmdb_proxy_url = source["tmdb_proxy_url"];
 	        this.one_fichier_api_key = source["one_fichier_api_key"];
 	        this.sendcm_api_key = source["sendcm_api_key"];
+	        this.nexum_api_key = source["nexum_api_key"];
+	        this.nexum_base_url = source["nexum_base_url"];
 	        this.usenet_host = source["usenet_host"];
 	        this.usenet_port = source["usenet_port"];
 	        this.usenet_ssl = source["usenet_ssl"];
@@ -1117,6 +1127,34 @@ export namespace main {
 	        this.hydracker_id = source["hydracker_id"];
 	    }
 	}
+	export class DeleteTorrentResult {
+	    hydracker_ok: boolean;
+	    hydracker_err?: string;
+	    seedbox_ok: boolean;
+	    seedbox_err?: string;
+	    used_seedbox: string;
+	    ftp_deleted: string[];
+	    ftp_errors: string[];
+	    files_attempted: string[];
+	    used_ftp: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new DeleteTorrentResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.hydracker_ok = source["hydracker_ok"];
+	        this.hydracker_err = source["hydracker_err"];
+	        this.seedbox_ok = source["seedbox_ok"];
+	        this.seedbox_err = source["seedbox_err"];
+	        this.used_seedbox = source["used_seedbox"];
+	        this.ftp_deleted = source["ftp_deleted"];
+	        this.ftp_errors = source["ftp_errors"];
+	        this.files_attempted = source["files_attempted"];
+	        this.used_ftp = source["used_ftp"];
+	    }
+	}
 	export class FicheContent {
 	    torrents?: api.TorrentsResult;
 	    nzbs?: api.NzbsResult;
@@ -1277,6 +1315,71 @@ export namespace main {
 	        this.url = source["url"];
 	    }
 	}
+	export class UploaderRow {
+	    author: string;
+	    torrents: number;
+	    nzbs: number;
+	    liens: number;
+	    total: number;
+	    total_size: number;
+	    last_upload_at: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new UploaderRow(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.author = source["author"];
+	        this.torrents = source["torrents"];
+	        this.nzbs = source["nzbs"];
+	        this.liens = source["liens"];
+	        this.total = source["total"];
+	        this.total_size = source["total_size"];
+	        this.last_upload_at = source["last_upload_at"];
+	    }
+	}
+	export class UploaderScanResult {
+	    uploaders: UploaderRow[];
+	    scanned_titles: number;
+	    // Go type: struct { Torrents int "json:\"torrents\""; Nzbs int "json:\"nzbs\""; Liens int "json:\"liens\"" }
+	    scanned_items: any;
+	    oldest_scanned: string;
+	    newest_scanned: string;
+	    duration_sec: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new UploaderScanResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.uploaders = this.convertValues(source["uploaders"], UploaderRow);
+	        this.scanned_titles = source["scanned_titles"];
+	        this.scanned_items = this.convertValues(source["scanned_items"], Object);
+	        this.oldest_scanned = source["oldest_scanned"];
+	        this.newest_scanned = source["newest_scanned"];
+	        this.duration_sec = source["duration_sec"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 
 }
 
@@ -1375,6 +1478,9 @@ export namespace tmdb {
 	    first_air_date: string;
 	    vote_average: number;
 	    media_type: string;
+	    imdb_id?: string;
+	    note_imdb?: number;
+	    vote_imdb?: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new Movie(source);
@@ -1391,6 +1497,9 @@ export namespace tmdb {
 	        this.first_air_date = source["first_air_date"];
 	        this.vote_average = source["vote_average"];
 	        this.media_type = source["media_type"];
+	        this.imdb_id = source["imdb_id"];
+	        this.note_imdb = source["note_imdb"];
+	        this.vote_imdb = source["vote_imdb"];
 	    }
 	}
 
