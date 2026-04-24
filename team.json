@@ -1,10 +1,6 @@
 {
   "users": [
-    { "pseudo": "Gandalf", "role": "admin", "title": "Grand Chef" }
-  ]
-}
-{
-  "users": [
-    { "pseudo": "Noxako", "role": "co-admin", "title": "Chef" }
+    { "pseudo": "Gandalf", "role": "admin", "title": "Grand Chef" },
+    { "pseudo": "Noxako",  "role": "admin", "title": "Chef" }
   ]
 }
