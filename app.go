@@ -49,7 +49,7 @@ import (
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
-const Version = "4.5.3"
+const Version = "5.0.0"
 
 type App struct {
 	ctx         context.Context
@@ -1155,6 +1155,84 @@ func (a *App) FicheGetContent(titleID int) (*FicheContent, error) {
 		wailsruntime.EventsEmit(a.ctx, "check:log", "[torrents raw] "+raw)
 	}
 	return out, nil
+}
+
+// --- Team gating : whitelist de pseudos autorisés + rôles ---
+//
+// Au démarrage, l'app fetch team.json sur GitHub raw (facile à éditer sans
+// rebuild) et match l'username Hydracker de l'user courant. Retourne le
+// rôle ("admin" | "user") ou "" si pas autorisé.
+
+const teamListURL = "https://raw.githubusercontent.com/Gandalfleblanc/Go-Post-Tools/main/team.json"
+
+type TeamUser struct {
+	Pseudo string `json:"pseudo"`
+	Role   string `json:"role"`            // "admin" | "modo" | "team" | "user"
+	Title  string `json:"title,omitempty"` // libellé libre affiché (ex: "Gand Chef")
+}
+
+type teamList struct {
+	Users []TeamUser `json:"users"`
+}
+
+// AuthResult : résultat de GetMyRole. Role vide = pas autorisé.
+type AuthResult struct {
+	Username string `json:"username"`
+	Role     string `json:"role"`  // "admin" | "modo" | "team" | "user" | "" (pas autorisé)
+	Title    string `json:"title"` // libellé libre pour la sidebar
+	Avatar   string `json:"avatar,omitempty"`
+}
+
+// GetMyRole : identifie l'user courant via Hydracker + check la whitelist.
+func (a *App) GetMyRole() (*AuthResult, error) {
+	// 1. Qui suis-je sur Hydracker ?
+	me, err := a.client.GetUser("me")
+	if err != nil {
+		return nil, fmt.Errorf("impossible de récupérer ton username Hydracker : %w", err)
+	}
+	if me == nil || me.Username == "" {
+		return nil, fmt.Errorf("username Hydracker vide — token invalide ?")
+	}
+
+	result := &AuthResult{Username: me.Username}
+	if me.Image != "" {
+		result.Avatar = me.Image
+	} else if me.Avatar != "" {
+		result.Avatar = me.Avatar
+	}
+
+	// 2. Fetch la team list depuis GitHub raw
+	req, _ := http.NewRequest("GET", teamListURL, nil)
+	req.Header.Set("User-Agent", "GoPostTools/4.x")
+	c := &http.Client{Timeout: 10 * time.Second}
+	resp, err := c.Do(req)
+	if err != nil {
+		return result, fmt.Errorf("fetch team.json : %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return result, fmt.Errorf("fetch team.json HTTP %d", resp.StatusCode)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	var tl teamList
+	if err := json.Unmarshal(body, &tl); err != nil {
+		return result, fmt.Errorf("parse team.json : %w", err)
+	}
+
+	// 3. Match (case-insensitive)
+	for _, u := range tl.Users {
+		if strings.EqualFold(u.Pseudo, me.Username) {
+			switch u.Role {
+			case "admin", "modo", "team", "user":
+				result.Role = u.Role
+			default:
+				result.Role = "user" // défaut si rôle inconnu
+			}
+			result.Title = u.Title
+			return result, nil
+		}
+	}
+	return result, nil // role vide = pas autorisé
 }
 
 // FicheGetNfo récupère le NFO HTML d'un torrent/lien/nzb.

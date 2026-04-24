@@ -1031,6 +1031,24 @@ export namespace history {
 
 export namespace main {
 	
+	export class AuthResult {
+	    username: string;
+	    role: string;
+	    title: string;
+	    avatar?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new AuthResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.username = source["username"];
+	        this.role = source["role"];
+	        this.title = source["title"];
+	        this.avatar = source["avatar"];
+	    }
+	}
 	export class AutoReseedDDLResult {
 	    lien_id: number;
 	    filename: string;

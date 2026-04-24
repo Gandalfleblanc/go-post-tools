@@ -118,6 +118,10 @@ export function GetMetaSubs() {
   return window['go']['main']['App']['GetMetaSubs']();
 }
 
+export function GetMyRole() {
+  return window['go']['main']['App']['GetMyRole']();
+}
+
 export function GetMyUsername() {
   return window['go']['main']['App']['GetMyUsername']();
 }

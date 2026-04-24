@@ -5,7 +5,7 @@
   import HydrackerTab from './HydrackerTab.svelte'
   import { logEntries, addLog, clearLogs } from './logs.js'
   import logo from './assets/logo.png'
-  import { ListCheckTorrents, ReseedFromLihdl, ReseedPrepare, ReseedExecute, SelectAnyTorrentFile, SelectMkvFile, GetVersion, StartWatchFolder, StopWatchFolder, IsWatching, CheckForUpdate, OpenBrowser, HistoryList, HistoryDelete, HistoryStats, DownloadUpdate, HasLihdlSettingsPassword, SetLihdlSettingsPassword, VerifyLihdlSettingsPassword, ClearLihdlSettingsPassword, IsLihdlPasswordManaged, IsHydrackerURLManaged, GetEffectiveHydrackerURL, FindHydrackerSources, FicheGetContent, FicheGetNfo, GetDDLFilename, GetUploaderStats, HydrackerSearch, TMDBGetByImdbID, TMDBGetProviders, HydrackerGetByID, HydrackerGetByTmdbID, DownloadToDownloads, AutoReseedFromHydracker, AutoReseedDDLFromHydracker, AutoReseedFullFromTorrent, ListReseedRequests, ListMyLiens, ListMyTorrents, DeleteMyLien, DeleteMyTorrent, DeleteMyNzb, DeleteTorrentAndFTP, ListSeedboxHashes, GetNexumIndex, TestNexum, UpdateMyLien, UpdateMyTorrent, GetMetaQualities, ListTitlesSorted, GetUserProfile, ParseFilename, Notify } from '../wailsjs/go/main/App.js'
+  import { ListCheckTorrents, ReseedFromLihdl, ReseedPrepare, ReseedExecute, SelectAnyTorrentFile, SelectMkvFile, GetVersion, StartWatchFolder, StopWatchFolder, IsWatching, CheckForUpdate, OpenBrowser, HistoryList, HistoryDelete, HistoryStats, DownloadUpdate, HasLihdlSettingsPassword, SetLihdlSettingsPassword, VerifyLihdlSettingsPassword, ClearLihdlSettingsPassword, IsLihdlPasswordManaged, IsHydrackerURLManaged, GetEffectiveHydrackerURL, FindHydrackerSources, FicheGetContent, FicheGetNfo, GetDDLFilename, GetUploaderStats, GetMyRole, HydrackerSearch, TMDBGetByImdbID, TMDBGetProviders, HydrackerGetByID, HydrackerGetByTmdbID, DownloadToDownloads, AutoReseedFromHydracker, AutoReseedDDLFromHydracker, AutoReseedFullFromTorrent, ListReseedRequests, ListMyLiens, ListMyTorrents, DeleteMyLien, DeleteMyTorrent, DeleteMyNzb, DeleteTorrentAndFTP, ListSeedboxHashes, GetNexumIndex, TestNexum, UpdateMyLien, UpdateMyTorrent, GetMetaQualities, ListTitlesSorted, GetUserProfile, ParseFilename, Notify } from '../wailsjs/go/main/App.js'
 
   // --- Tabs ---
   const TABS = [
@@ -21,6 +21,32 @@
     { id: 'log',       label: '📋 Journal' },
   ]
   let activeTab = 'hydracker'
+
+  // --- Auth team ---
+  // authState : 'loading' | 'ok' | 'forbidden' | 'error'
+  // myRole    : 'admin' | 'user' | ''
+  let authState = 'loading'
+  let authError = ''
+  let myRole = ''
+  let myUsername = ''
+  let myAvatar = ''
+  let myTitle = ''
+
+  // Permissions par rôle — éditable par Gandalf.
+  // Admin voit tout. Modo/Team voient (presque) comme admin. User voit un subset.
+  // Pour changer qui voit quoi : édite ces arrays.
+  const TABS_ADMIN = ['hydracker','fiches','check','requests','reseed','myuploads','history','apilog','settings','log']
+  const TABS_MODO  = ['hydracker','fiches','check','requests','reseed','myuploads','history','settings','log']
+  const TABS_TEAM  = ['hydracker','fiches','check','requests','myuploads','history','settings','log']
+  const TABS_USER  = ['hydracker','fiches','myuploads','history','settings','log']
+
+  $: visibleTabs = TABS.filter(t => {
+    if (myRole === 'admin') return TABS_ADMIN.includes(t.id)
+    if (myRole === 'modo')  return TABS_MODO.includes(t.id)
+    if (myRole === 'team')  return TABS_TEAM.includes(t.id)
+    if (myRole === 'user')  return TABS_USER.includes(t.id)
+    return false
+  })
 
   // --- Config ---
   let cfg = {
@@ -791,7 +817,7 @@
   }
 
 // --- Mes uploads (admin CRUD sur tes propres items) ---
-  let myUsername = 'Gandalf'              // TODO: fetch depuis /user-profile/me
+  // myUsername vient de l'auth team (résolu via /user-profile/me)
   let myTab = 'torrents'                   // 'torrents' | 'liens'
   let myItems = []                         // []Lien ou []TorrentItem
   let myLoading = false
@@ -1096,6 +1122,19 @@
     } catch {}
     try { appVersion = await GetVersion() } catch {}
     try { updateInfo = await CheckForUpdate() } catch {}
+    // Check auth team
+    try {
+      const auth = await GetMyRole()
+      myUsername = auth?.username || ''
+      myRole     = auth?.role     || ''
+      myAvatar   = auth?.avatar   || ''
+      myTitle    = auth?.title    || ''
+      if (!myRole) authState = 'forbidden'
+      else authState = 'ok'
+    } catch(e) {
+      authError = String(e?.message || e)
+      authState = 'error'
+    }
     checkLihdlPasswordStatus()
     checkSeedboxPasswordStatus()
     try { hydrackerURLManaged = await IsHydrackerURLManaged() } catch {}
@@ -1261,6 +1300,60 @@
   }
 </script>
 
+{#if authState === 'loading'}
+  <div class="auth-screen">
+    <div class="auth-card">
+      <div style="font-size:40px;margin-bottom:12px">⏳</div>
+      <div style="font-size:16px;font-weight:600">Vérification de l'accès…</div>
+      <div style="color:var(--text3);font-size:12px;margin-top:8px">Check Hydracker + team.json</div>
+    </div>
+  </div>
+{:else if authState === 'forbidden'}
+  <div class="auth-screen">
+    <div class="auth-card" style="border-color:#ff4444">
+      <div style="font-size:40px;margin-bottom:12px">🚫</div>
+      <div style="font-size:16px;font-weight:600;color:#ff6b6b">Accès non autorisé</div>
+      <div style="color:var(--text2);font-size:13px;margin-top:10px;line-height:1.5">
+        Ton pseudo Hydracker n'est pas dans la liste des users autorisés.<br>
+        Contacte <b>Gandalf</b> pour demander l'accès.
+      </div>
+    </div>
+  </div>
+{:else if authState === 'error'}
+  <div class="auth-screen">
+    <div class="auth-card" style="border-color:#ffd60a">
+      <div style="font-size:40px;margin-bottom:12px">⚠</div>
+      <div style="font-size:16px;font-weight:600;color:#ffd60a">Erreur d'authentification</div>
+      <div style="color:var(--text2);font-size:13px;margin-top:10px;line-height:1.5">
+        {authError || 'Erreur inconnue'}
+      </div>
+      <div style="color:var(--text3);font-size:11px;margin-top:10px">
+        {#if authError.includes('team.json')}
+          Le fichier de whitelist team n'est pas accessible sur GitHub. Contacte <b>Gandalf</b>.
+        {:else if authError.includes('Hydracker')}
+          Vérifie que ton <b>Token Hydracker</b> est correct dans Réglages (ou édite manuellement <code>~/.config/go-post-tools/config.json</code>).
+        {:else}
+          Erreur inattendue — contacte Gandalf avec ce message.
+        {/if}
+      </div>
+      <button class="btn-save" style="margin-top:14px" on:click={async () => {
+        authState = 'loading'
+        authError = ''
+        try {
+          const auth = await GetMyRole()
+          myUsername = auth?.username || ''
+          myRole     = auth?.role     || ''
+          myAvatar   = auth?.avatar   || ''
+          myTitle    = auth?.title    || ''
+          authState = myRole ? 'ok' : 'forbidden'
+        } catch(e) {
+          authError = String(e?.message || e)
+          authState = 'error'
+        }
+      }}>🔄 Réessayer</button>
+    </div>
+  </div>
+{:else}
 <div class="layout">
   <!-- Sidebar -->
   <aside class="sidebar" class:collapsed={sidebarCollapsed}>
@@ -1275,8 +1368,33 @@
         <div class="brand-author">By GANDALF</div>
       {/if}
     </div>
+
+    <!-- Carte user (pseudo + rôle) -->
+    {#if myUsername}
+      <div class="user-card" class:compact={sidebarCollapsed}>
+        {#if myAvatar}
+          <img class="user-avatar" src={myAvatar.startsWith('http') ? myAvatar : `https://hydracker.com/${myAvatar}`} alt={myUsername}
+            on:error={(e) => { e.currentTarget.style.display='none' }} />
+        {:else}
+          <div class="user-avatar user-avatar-initial">{myUsername.charAt(0).toUpperCase()}</div>
+        {/if}
+        {#if !sidebarCollapsed}
+          <div class="user-info">
+            <div class="user-name">{myUsername}</div>
+            <div class="user-role user-role-{myRole}">
+              {#if myRole === 'admin'}🥇
+              {:else if myRole === 'modo'}🥈
+              {:else if myRole === 'team'}🥉
+              {:else}🔵{/if}
+              {myTitle || (myRole === 'admin' ? 'Admin' : myRole === 'modo' ? 'Modo' : myRole === 'team' ? 'Team' : 'User')}
+            </div>
+          </div>
+        {/if}
+      </div>
+    {/if}
+
     <nav>
-      {#each TABS as tab}
+      {#each visibleTabs as tab}
         <button class="nav-item" class:active={activeTab === tab.id}
           on:click={() => activeTab = tab.id} title={sidebarCollapsed ? tab.label : ''}>
           {sidebarCollapsed ? tab.label.split(' ')[0] : tab.label}
@@ -2801,6 +2919,7 @@
 
   </main>
 </div>
+{/if}<!-- fin authState === 'ok' -->
 
 <!-- ===== Modale mot de passe LiHDL ===== -->
 {#if lihdlModal}
@@ -3188,6 +3307,79 @@
     font-weight: 600; color: var(--text2); font-size: 11px;
     text-transform: uppercase; letter-spacing: 1.2px;
   }
+  /* Carte user dans la sidebar (pseudo + rôle) */
+  .user-card {
+    display: flex; align-items: center; gap: 10px;
+    margin: 0 12px 14px;
+    padding: 10px 12px;
+    background: linear-gradient(135deg, rgba(0,180,216,0.08), rgba(0,180,216,0.02));
+    border: 1px solid rgba(0,180,216,0.22);
+    border-radius: 10px;
+  }
+  .user-card.compact {
+    padding: 6px;
+    justify-content: center;
+    margin: 0 8px 12px;
+  }
+  .user-avatar {
+    width: 36px; height: 36px;
+    border-radius: 50%;
+    object-fit: cover;
+    flex-shrink: 0;
+    background: linear-gradient(135deg, #7c3aed, #3b82f6);
+  }
+  .user-avatar-initial {
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 700; font-size: 15px; color: white;
+  }
+  .user-info { flex: 1; min-width: 0; }
+  .user-name {
+    font-size: 13px; font-weight: 600; color: var(--text);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .user-role {
+    font-size: 10px; font-weight: 600;
+    margin-top: 2px; padding: 1px 7px; border-radius: 8px;
+    display: inline-block;
+  }
+  .user-role-admin {
+    color: #fbbf24; /* doré */
+    background: rgba(251, 191, 36, 0.12);
+    border: 1px solid rgba(251, 191, 36, 0.45);
+    text-shadow: 0 0 8px rgba(251, 191, 36, 0.3);
+  }
+  .user-role-modo {
+    color: #cbd5e1; /* argent */
+    background: rgba(203, 213, 225, 0.10);
+    border: 1px solid rgba(203, 213, 225, 0.35);
+  }
+  .user-role-team {
+    color: #cd7f32; /* bronze */
+    background: rgba(205, 127, 50, 0.12);
+    border: 1px solid rgba(205, 127, 50, 0.35);
+  }
+  .user-role-user {
+    color: #60a5fa; /* bleu */
+    background: rgba(96, 165, 250, 0.12);
+    border: 1px solid rgba(96, 165, 250, 0.35);
+  }
+
+  /* Écran d'auth (loading/forbidden/error) */
+  .auth-screen {
+    position: fixed; inset: 0;
+    display: flex; align-items: center; justify-content: center;
+    background: var(--bg, #0d0a10);
+    padding: 20px;
+  }
+  .auth-card {
+    background: var(--bg2, #1a1420);
+    border: 1px solid var(--border-strong, rgba(255,255,255,0.14));
+    border-radius: 14px;
+    padding: 40px 34px;
+    max-width: 460px; width: 100%;
+    text-align: center;
+  }
+
   /* Section verrouillée team-shared (creds bakés au build) */
   .section-locked > .section-header {
     border-bottom: 2px solid #ff4444;

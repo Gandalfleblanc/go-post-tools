@@ -67,6 +67,8 @@ export function GetMetaQualities():Promise<Array<api.Quality>>;
 
 export function GetMetaSubs():Promise<Array<api.Lang>>;
 
+export function GetMyRole():Promise<main.AuthResult>;
+
 export function GetMyUsername():Promise<string>;
 
 export function GetNexumIndex():Promise<main.NexumIndex>;
