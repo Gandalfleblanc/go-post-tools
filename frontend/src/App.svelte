@@ -34,7 +34,7 @@
     usenet_user: '', usenet_password: '', usenet_connections: 20,
     usenet_group: 'alt.binaries.test',
     parpar_redundancy: 5, parpar_threads: 8, parpar_slice_size: 768000,
-    ftp_host: '', ftp_port: 21, ftp_user: '', ftp_password: '', ftp_path: '/',
+    ftp_host: '', ftp_port: 21, ftp_user: '', ftp_password: '', ftp_path: '',
     seedbox_url: '', seedbox_user: '', seedbox_password: '', seedbox_label: '',
     qbit_url: '', qbit_user: '', qbit_password: '',
     mod_seedbox_url: '', mod_seedbox_user: '', mod_seedbox_password: '',

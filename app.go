@@ -47,7 +47,7 @@ import (
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
-const Version = "4.1.1"
+const Version = "4.1.2"
 
 type App struct {
 	ctx         context.Context
@@ -1183,6 +1183,27 @@ func (a *App) seedboxConfigured() bool {
 	return a.cfg.QBitURL != "" || a.cfg.SeedboxURL != ""
 }
 
+// findTorrentByHashOnFiche cherche un torrent avec l'info_hash donné parmi les
+// torrents publics d'une fiche. Retourne l'ID si trouvé, 0 sinon.
+// Utilisé pour dédupliquer avant UploadTorrent au cas où un retry aurait déjà
+// créé un torrent avec le même info_hash (ce qui ferait échouer le 2e upload).
+func (a *App) findTorrentByHashOnFiche(titleID int, infoHash string) (int, error) {
+	if titleID <= 0 || infoHash == "" {
+		return 0, nil
+	}
+	res, err := a.client.GetTorrents(titleID, api.ContentFilter{})
+	if err != nil {
+		return 0, err
+	}
+	target := strings.ToLower(infoHash)
+	for _, t := range res.Torrents {
+		if strings.ToLower(t.InfoHash) == target || strings.ToLower(t.Hash) == target {
+			return t.ID, nil
+		}
+	}
+	return 0, nil
+}
+
 func (a *App) SelectAnyTorrentFile() (string, error) {
 	path, err := wailsruntime.OpenFileDialog(a.ctx, wailsruntime.OpenDialogOptions{
 		Title: "Sélectionner un fichier .torrent",
@@ -2186,6 +2207,20 @@ func (a *App) PostTorrentWorkflow(titleID, qualite int, langues, subs []string, 
 	if a.isCancelled() {
 		return nil, fmt.Errorf("annulé par l'utilisateur")
 	}
+	// 3a. Dedup : si un retry précédent a créé un torrent avec le même info_hash,
+	//     le supprimer avant de re-uploader (évite l'erreur 422 "duplicate").
+	if mi, err := metainfo.LoadFromFile(torrentPath); err == nil {
+		newHash := mi.HashInfoBytes().HexString()
+		if existingID, _ := a.findTorrentByHashOnFiche(titleID, newHash); existingID > 0 {
+			emit("dedup", fmt.Sprintf("Suppression du duplicate précédent #%d…", existingID))
+			if err := a.client.DeleteTorrent(existingID); err != nil {
+				emit("dedup_warn", fmt.Sprintf("dedup échoué : %s (ignoré)", err.Error()))
+			} else {
+				emit("dedup_done", fmt.Sprintf("Duplicate #%d supprimé", existingID))
+			}
+		}
+	}
+
 	// 3. Post sur Hydracker
 	emit("post", "Post sur Hydracker…")
 	uploaded, err := a.client.UploadTorrent(titleID, qualite, langues, subs, torrentPath, nfo, saison, episode)
