@@ -1273,6 +1273,20 @@ export namespace main {
 		    return a;
 		}
 	}
+	export class NzbFileEntry {
+	    filename: string;
+	    size?: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new NzbFileEntry(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.filename = source["filename"];
+	        this.size = source["size"];
+	    }
+	}
 	export class NzbWorkflowResult {
 	    nzb_path: string;
 	    hydracker_id: number;

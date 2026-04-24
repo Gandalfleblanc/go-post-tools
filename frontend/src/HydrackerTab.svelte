@@ -2174,8 +2174,41 @@
     box-shadow: inset 0 1px 0 rgba(255,255,255,0.25), 0 6px 18px -6px var(--accent-glow);
   }
   .check-label {
-    display: flex; align-items: center; gap: 7px;
+    display: inline-flex; align-items: center; gap: 8px;
     font-size: 13px; color: var(--text); cursor: pointer;
+    line-height: 1; user-select: none;
+    padding: 4px 2px;
+  }
+  .check-label input[type="checkbox"] {
+    appearance: none;
+    -webkit-appearance: none;
+    width: 18px; height: 18px;
+    margin: 0; padding: 0;
+    background: rgba(255,255,255,0.04);
+    border: 1.5px solid var(--border-strong, rgba(255,255,255,0.2));
+    border-radius: 5px;
+    cursor: pointer;
+    position: relative;
+    flex-shrink: 0;
+    transition: all 0.15s ease;
+    vertical-align: middle;
+  }
+  .check-label input[type="checkbox"]:hover {
+    border-color: var(--accent, #7ef0c0);
+    background: rgba(126,240,192,0.06);
+  }
+  .check-label input[type="checkbox"]:checked {
+    background: var(--accent, #7ef0c0);
+    border-color: var(--accent, #7ef0c0);
+  }
+  .check-label input[type="checkbox"]:checked::after {
+    content: '';
+    position: absolute;
+    top: 2px; left: 5px;
+    width: 4px; height: 8px;
+    border: solid #0d0a10;
+    border-width: 0 2px 2px 0;
+    transform: rotate(45deg);
   }
   .check-label input { width: auto; accent-color: var(--red-hot); }
 

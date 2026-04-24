@@ -50,7 +50,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-const Version = "5.2.0"
+const Version = "5.2.1"
 
 type App struct {
 	ctx         context.Context
@@ -1196,13 +1196,13 @@ type teamList struct {
 func defaultRoles() map[string]RoleDef {
 	return map[string]RoleDef{
 		"admin": {Badge: "🥇", Color: "#fbbf24", Title: "Admin",
-			Tabs: []string{"hydracker", "fiches", "check", "requests", "reseed", "myuploads", "history", "apilog", "manager", "settings", "log"}},
+			Tabs: []string{"hydracker", "fiches", "check", "reseed", "myuploads", "history", "logs", "manager", "settings"}},
 		"modo": {Badge: "🥈", Color: "#cbd5e1", Title: "Modo",
-			Tabs: []string{"hydracker", "fiches", "check", "requests", "reseed", "myuploads", "history", "settings", "log"}},
+			Tabs: []string{"hydracker", "fiches", "check", "reseed", "myuploads", "history", "logs", "settings"}},
 		"team": {Badge: "🥉", Color: "#cd7f32", Title: "Team",
-			Tabs: []string{"hydracker", "fiches", "check", "requests", "myuploads", "history", "settings", "log"}},
+			Tabs: []string{"hydracker", "fiches", "check", "reseed", "myuploads", "history", "settings"}},
 		"user": {Badge: "🔵", Color: "#60a5fa", Title: "User",
-			Tabs: []string{"hydracker", "fiches", "myuploads", "history", "settings", "log"}},
+			Tabs: []string{"hydracker", "fiches", "myuploads", "history", "settings"}},
 	}
 }
 
@@ -1415,6 +1415,197 @@ func (a *App) HashPassword(password string) (string, error) {
 		return "", err
 	}
 	return string(b), nil
+}
+
+// FetchHydrackerAvatar : récupère l'avatar du user courant via son token Hydracker.
+// Called post-login — optionnel, fallback silencieux si token absent/invalide.
+// Renvoie l'URL absolue de l'avatar (ou "" si pas dispo).
+func (a *App) FetchHydrackerAvatar() string {
+	if a.cfg == nil || strings.TrimSpace(a.cfg.HydrackerToken) == "" {
+		return ""
+	}
+	me, err := a.client.GetMe()
+	if err != nil || me == nil {
+		return ""
+	}
+	av := me.Image
+	if av == "" {
+		av = me.Avatar
+	}
+	if av == "" {
+		return ""
+	}
+	if !strings.HasPrefix(av, "http") {
+		// Chemin relatif → préfixe l'URL de base Hydracker
+		base := strings.TrimRight(a.cfg.HydrackerBaseURL, "/")
+		// Enlève /api/v1 si présent
+		base = strings.TrimSuffix(base, "/api/v1")
+		av = base + "/" + strings.TrimLeft(av, "/")
+	}
+	// Mets à jour la session mémoire si connecté
+	a.sessionMu.Lock()
+	if a.currentUser != nil {
+		a.currentUser.Avatar = av
+	}
+	a.sessionMu.Unlock()
+	return av
+}
+
+// ChangeMyPassword : génère un nouveau hash pour l'user connecté + renvoie le team.json
+// complet à coller sur GitHub (tous les autres hashs préservés).
+func (a *App) ChangeMyPassword(newPassword string) (string, error) {
+	a.sessionMu.Lock()
+	cur := a.currentUser
+	a.sessionMu.Unlock()
+	if cur == nil {
+		return "", fmt.Errorf("non connecté")
+	}
+	if strings.TrimSpace(newPassword) == "" {
+		return "", fmt.Errorf("nouveau mot de passe vide")
+	}
+	prev, err := fetchTeam()
+	if err != nil {
+		return "", fmt.Errorf("fetch team.json actuel : %w", err)
+	}
+	newHash, err := bcrypt.GenerateFromPassword([]byte(newPassword), 12)
+	if err != nil {
+		return "", err
+	}
+	out := teamList{Roles: resolveRoles(prev), Users: make([]TeamUser, 0, len(prev.Users))}
+	found := false
+	for _, u := range prev.Users {
+		if strings.EqualFold(u.Pseudo, cur.Username) {
+			u.PasswordHash = string(newHash)
+			found = true
+		}
+		out.Users = append(out.Users, u)
+	}
+	if !found {
+		return "", fmt.Errorf("user %q absent de team.json ?!", cur.Username)
+	}
+	// Si team.json n'avait pas de section roles, on la matérialise avec les defaults
+	// pour éviter que le user perde ses tabs au prochain fetch.
+	if prev.Roles == nil || len(prev.Roles) == 0 {
+		out.Roles = defaultRoles()
+	}
+	b, err := json.MarshalIndent(out, "", "  ")
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
+}
+
+// NzbFileEntry : un fichier listé dans un NZB.
+type NzbFileEntry struct {
+	Filename string `json:"filename"`
+	Size     int64  `json:"size,omitempty"`
+}
+
+// GetNzbFilenames : fetch le XML NZB depuis Hydracker et extrait les noms de fichiers.
+// nzbID = id du NZB sur Hydracker.
+func (a *App) GetNzbFilenames(nzbID int) ([]NzbFileEntry, error) {
+	if a.client == nil {
+		return nil, fmt.Errorf("client non initialisé")
+	}
+	xmlData, err := a.downloadHydrackerNzb(nzbID)
+	if err != nil {
+		return nil, fmt.Errorf("download NZB : %w", err)
+	}
+	return parseNzbFiles(xmlData), nil
+}
+
+// downloadHydrackerNzb : télécharge le XML d'un NZB via GET /api/v1/nzbs/{id}/download.
+func (a *App) downloadHydrackerNzb(nzbID int) ([]byte, error) {
+	apiURL := fmt.Sprintf("%s/nzbs/%d/download", a.client.BaseURL(), nzbID)
+	req, err := http.NewRequest("GET", apiURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	if a.cfg.HydrackerToken != "" {
+		req.Header.Set("Authorization", "Bearer "+a.cfg.HydrackerToken)
+	}
+	req.Header.Set("Accept", "application/x-nzb, text/xml, */*")
+	req.Header.Set("User-Agent", "GoPostTools/5.x")
+	c := &http.Client{Timeout: 30 * time.Second}
+	resp, err := c.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	data, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
+	}
+	return data, nil
+}
+
+// parseNzbFiles : parse un XML NZB et extrait les filenames depuis les attributs subject.
+// Les filenames dans les NZB sont dans <file subject="[1/42] - \"nom.mkv\" yEnc (1/40)">.
+func parseNzbFiles(xmlData []byte) []NzbFileEntry {
+	out := []NzbFileEntry{}
+	seen := map[string]bool{}
+	s := string(xmlData)
+	idx := 0
+	for {
+		i := strings.Index(s[idx:], "<file ")
+		if i < 0 {
+			break
+		}
+		i += idx
+		close := strings.Index(s[i:], ">")
+		if close < 0 {
+			break
+		}
+		tag := s[i : i+close]
+		idx = i + close + 1
+		// Extract subject="..."
+		subIdx := strings.Index(tag, "subject=\"")
+		if subIdx < 0 {
+			continue
+		}
+		subIdx += len("subject=\"")
+		end := strings.Index(tag[subIdx:], "\"")
+		if end < 0 {
+			continue
+		}
+		subject := tag[subIdx : subIdx+end]
+		// Unescape XML entities basiques
+		subject = strings.ReplaceAll(subject, "&quot;", "\"")
+		subject = strings.ReplaceAll(subject, "&apos;", "'")
+		subject = strings.ReplaceAll(subject, "&amp;", "&")
+		// Extract le filename entre guillemets dans le subject (si présent)
+		fn := extractFilenameFromSubject(subject)
+		if fn == "" {
+			continue
+		}
+		if seen[fn] {
+			continue
+		}
+		seen[fn] = true
+		out = append(out, NzbFileEntry{Filename: fn})
+	}
+	return out
+}
+
+// extractFilenameFromSubject : heuristique pour récupérer "nom.ext" dans un subject yEnc.
+// Formats fréquents :
+//
+//	[1/5] - "archive.par2" yEnc (1/1)
+//	"archive.par2" yEnc (1/1)
+func extractFilenameFromSubject(subj string) string {
+	// Cherche d'abord entre guillemets
+	if i := strings.Index(subj, "\""); i >= 0 {
+		if j := strings.Index(subj[i+1:], "\""); j > 0 {
+			return subj[i+1 : i+1+j]
+		}
+	}
+	// Fallback : récupère le mot qui ressemble à un filename (contient un point)
+	for _, tok := range strings.Fields(subj) {
+		if strings.Contains(tok, ".") && !strings.Contains(tok, "/") {
+			return strings.Trim(tok, "[]()-")
+		}
+	}
+	return ""
 }
 
 // FicheGetNfo récupère le NFO HTML d'un torrent/lien/nzb.

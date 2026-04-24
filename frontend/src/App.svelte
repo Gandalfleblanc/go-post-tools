@@ -6,23 +6,25 @@
   import { logEntries, addLog, clearLogs } from './logs.js'
   import logo from './assets/logo.png'
   import loginLogo from './assets/login-logo.png'
-  import { ListCheckTorrents, ReseedFromLihdl, ReseedPrepare, ReseedExecute, SelectAnyTorrentFile, SelectMkvFile, GetVersion, StartWatchFolder, StopWatchFolder, IsWatching, CheckForUpdate, OpenBrowser, HistoryList, HistoryDelete, HistoryStats, DownloadUpdate, HasLihdlSettingsPassword, SetLihdlSettingsPassword, VerifyLihdlSettingsPassword, ClearLihdlSettingsPassword, IsLihdlPasswordManaged, IsHydrackerURLManaged, GetEffectiveHydrackerURL, FindHydrackerSources, FicheGetContent, FicheGetNfo, GetDDLFilename, GetUploaderStats, LoginUser, Logout, GetCurrentUser, HashPassword, GetTeamConfig, BuildTeamJSON, HydrackerSearch, TMDBGetByImdbID, TMDBGetProviders, HydrackerGetByID, HydrackerGetByTmdbID, DownloadToDownloads, AutoReseedFromHydracker, AutoReseedDDLFromHydracker, AutoReseedFullFromTorrent, ListReseedRequests, ListMyLiens, ListMyTorrents, DeleteMyLien, DeleteMyTorrent, DeleteMyNzb, DeleteTorrentAndFTP, ListSeedboxHashes, GetNexumIndex, TestNexum, UpdateMyLien, UpdateMyTorrent, GetMetaQualities, ListTitlesSorted, GetUserProfile, ParseFilename, Notify } from '../wailsjs/go/main/App.js'
+  import { ListCheckTorrents, ReseedFromLihdl, ReseedPrepare, ReseedExecute, SelectAnyTorrentFile, SelectMkvFile, GetVersion, StartWatchFolder, StopWatchFolder, IsWatching, CheckForUpdate, OpenBrowser, HistoryList, HistoryDelete, HistoryStats, DownloadUpdate, HasLihdlSettingsPassword, SetLihdlSettingsPassword, VerifyLihdlSettingsPassword, ClearLihdlSettingsPassword, IsLihdlPasswordManaged, IsHydrackerURLManaged, GetEffectiveHydrackerURL, FindHydrackerSources, FicheGetContent, FicheGetNfo, GetDDLFilename, GetUploaderStats, LoginUser, Logout, GetCurrentUser, HashPassword, GetTeamConfig, BuildTeamJSON, FetchHydrackerAvatar, ChangeMyPassword, GetNzbFilenames, HydrackerSearch, TMDBGetByImdbID, TMDBGetProviders, HydrackerGetByID, HydrackerGetByTmdbID, DownloadToDownloads, AutoReseedFromHydracker, AutoReseedDDLFromHydracker, AutoReseedFullFromTorrent, ListReseedRequests, ListMyLiens, ListMyTorrents, DeleteMyLien, DeleteMyTorrent, DeleteMyNzb, DeleteTorrentAndFTP, ListSeedboxHashes, GetNexumIndex, TestNexum, UpdateMyLien, UpdateMyTorrent, GetMetaQualities, ListTitlesSorted, GetUserProfile, ParseFilename, Notify } from '../wailsjs/go/main/App.js'
+  import nexumLogo from './assets/nexum-logo.png'
 
-  // --- Tabs ---
+  // --- Tabs (réorganisés par workflow, 8 onglets principaux) ---
   const TABS = [
     { id: 'hydracker', label: '🎬 Hydracker' },
     { id: 'fiches',    label: '🎞 Fiches' },
     { id: 'check',     label: '🔍 Check Torrent' },
-    { id: 'requests',  label: '📋 Demandes Reseed' },
-    { id: 'reseed',    label: '♻️ Reseed' },
+    { id: 'reseed',    label: '♻️ Reseed' },        // fusion : Demandes + Depuis URL
     { id: 'myuploads', label: '📤 Mes uploads' },
-    { id: 'nexum',     label: '🟪 Nexum' },
     { id: 'history',   label: '📚 Historique' },
-    { id: 'apilog',    label: '🔬 Log API' },
+    { id: 'nexum',     label: '🟪 Nexum' },
+    { id: 'logs',      label: '🔬 Logs' },           // fusion : Journal + API
     { id: 'manager',   label: '👥 Manager' },
     { id: 'settings',  label: '⚙️ Réglages' },
-    { id: 'log',       label: '📋 Journal' },
   ]
+  // Sous-onglets des tabs fusionnées
+  let reseedSubTab = 'requests'   // 'requests' | 'url'
+  let logsSubTab = 'journal'      // 'journal' | 'api'
   // Onglets visibles UNIQUEMENT pour certains pseudos (indépendant du rôle)
   const TABS_OWNER_ONLY = {
     'nexum': ['Gandalf'],
@@ -56,11 +58,20 @@
       applyAuth(auth)
       loginPassword = ''
       authState = 'ok'
+      // Fetch avatar Hydracker en tâche de fond (silencieux si token absent/invalide)
+      fetchAvatar()
     } catch (e) {
       loginError = String(e?.message || e).replace(/^Error:\s*/, '')
     } finally {
       loginLoading = false
     }
+  }
+
+  async function fetchAvatar() {
+    try {
+      const av = await FetchHydrackerAvatar()
+      if (av) myAvatar = av
+    } catch {}
   }
 
   function applyAuth(auth) {
@@ -249,7 +260,35 @@
     loadManager()
   }
 
-  // (ancien bloc "Gestion utilisateurs" dans Réglages remplacé par l'onglet Manager)
+  // --- Change my password (Réglages) ---
+  let changePwdValue = ''
+  let changePwdConfirm = ''
+  let changePwdOutput = ''
+  let changePwdError = ''
+  let changePwdSuccess = false
+  let changePwdLoading = false
+
+  async function doChangePassword() {
+    changePwdError = ''
+    changePwdSuccess = false
+    changePwdOutput = ''
+    if (!changePwdValue || changePwdValue !== changePwdConfirm) {
+      changePwdError = 'Les mots de passe ne correspondent pas'
+      return
+    }
+    changePwdLoading = true
+    try {
+      const json = await ChangeMyPassword(changePwdValue)
+      changePwdOutput = json
+      try { await navigator.clipboard.writeText(json); changePwdSuccess = true } catch {}
+      changePwdValue = ''
+      changePwdConfirm = ''
+    } catch (e) {
+      changePwdError = String(e?.message || e).replace(/^Error:\s*/, '')
+    } finally {
+      changePwdLoading = false
+    }
+  }
 
   // Les permissions par rôle sont maintenant définies dans team.json
   // (section "roles") et l'app reçoit la liste `tabs` via LoginUser.
@@ -624,6 +663,47 @@
   let fichesContent = null        // {liens, nzbs, torrents} de la fiche sélectionnée
   let fichesContentLoading = false
   let fichesContentTab = 'torrents'  // 'torrents' | 'nzbs' | 'liens'
+  let nzbFilenames = {}           // { [nzbId]: { state, files[], error } }
+
+  // groupBySeason : transforme [{saison, episode, ...}] en [{ season:int, items:[], hasFullSeason:bool }]
+  // Trié : saisons décroissantes, puis full_saison en haut, puis épisodes dans l'ordre.
+  function groupBySeason(items) {
+    const bySeason = new Map()
+    for (const it of items || []) {
+      const s = parseInt(it.saison || it.season || 0) || 0
+      if (!bySeason.has(s)) bySeason.set(s, [])
+      bySeason.get(s).push(it)
+    }
+    const seasons = [...bySeason.entries()]
+      .map(([season, items]) => ({
+        season,
+        items: [...items].sort((a, b) => {
+          // full_saison d'abord, puis par épisode croissant
+          if (a.full_saison && !b.full_saison) return -1
+          if (!a.full_saison && b.full_saison) return 1
+          return (parseInt(a.episode||0)||0) - (parseInt(b.episode||0)||0)
+        }),
+      }))
+      .sort((a, b) => b.season - a.season) // saisons décroissantes (dernière en haut)
+    return seasons
+  }
+
+  async function loadNzbFilenames(nzbs) {
+    for (const n of nzbs || []) {
+      if (nzbFilenames[n.id]) continue
+      nzbFilenames = { ...nzbFilenames, [n.id]: { state: 'loading' } }
+      try {
+        const files = await GetNzbFilenames(n.id)
+        nzbFilenames = { ...nzbFilenames, [n.id]: { state: 'ok', files: files || [] } }
+      } catch (e) {
+        nzbFilenames = { ...nzbFilenames, [n.id]: { state: 'err', error: String(e?.message || e) } }
+      }
+    }
+  }
+
+  $: if (fichesContentTab === 'nzbs' && fichesContent?.nzbs?.nzbs?.length) {
+    loadNzbFilenames(fichesContent.nzbs.nzbs)
+  }
 
   async function fichesSearch() {
     fichesError = ''
@@ -986,7 +1066,7 @@
     reqLoading = false
   }
 
-  $: if (activeTab === 'requests') loadReseedRequests()
+  $: if (activeTab === 'reseed' && reseedSubTab === 'requests') loadReseedRequests()
   // Reset page quand filtre change
   $: if (reqFilter) { reqPage = 1 }
 
@@ -1311,12 +1391,33 @@
   let checkLoading = false
   let checkState = {}  // { [hash]: { stage, msg, percent, speed } }
   let checkFilter = 'all'  // 'all' | 'active' | 'inactive'
+  let checkSort = 'seeds_desc'  // 'seeds_desc' | 'seeds_asc' | 'size_desc' | 'name'
+  let checkPage = 1
+  const checkPageSize = 100
   function isIncomplete(t) { return t.size > 0 && t.done < t.size }
-  $: filteredCheckTorrents = checkTorrents.filter(t => {
-    if (checkFilter === 'active')   return t.is_active === 1
-    if (checkFilter === 'inactive') return isIncomplete(t)
-    return true
-  })
+  function seedsOf(t) {
+    const v = t.seeders ?? t.seeds ?? t.seed ?? t.num_seeders
+    return v == null ? 0 : parseInt(v) || 0
+  }
+  $: filteredCheckTorrents = (() => {
+    let arr = checkTorrents.filter(t => {
+      if (checkFilter === 'active')   return t.is_active === 1
+      if (checkFilter === 'inactive') return isIncomplete(t)
+      return true
+    })
+    const cmp = {
+      seeds_desc: (a, b) => seedsOf(b) - seedsOf(a),
+      seeds_asc:  (a, b) => seedsOf(a) - seedsOf(b),
+      size_desc:  (a, b) => (b.size || 0) - (a.size || 0),
+      name:       (a, b) => (a.file_name || a.name || '').localeCompare(b.file_name || b.name || ''),
+    }[checkSort] || (() => 0)
+    return [...arr].sort(cmp)
+  })()
+  $: checkTotalPages = Math.max(1, Math.ceil(filteredCheckTorrents.length / checkPageSize))
+  $: pagedCheckTorrents = filteredCheckTorrents.slice((checkPage - 1) * checkPageSize, checkPage * checkPageSize)
+  $: if (checkPage > checkTotalPages) checkPage = checkTotalPages
+  // Reset page sur changement de filtre ou tri
+  $: if (checkFilter || checkSort) checkPage = 1
 
   async function loadCheckTorrents(refresh = false) {
     checkLoading = true
@@ -1564,10 +1665,10 @@
     {#if myUsername}
       <div class="user-card" class:compact={sidebarCollapsed}>
         {#if myAvatar}
-          <img class="user-avatar" src={myAvatar.startsWith('http') ? myAvatar : `https://hydracker.com/${myAvatar}`} alt={myUsername}
-            on:error={(e) => { e.currentTarget.style.display='none' }} />
+          <img class="user-avatar" src={myAvatar} alt={myUsername} style="border-color:{myColor || 'transparent'}"
+            on:error={(e) => { myAvatar = '' }} />
         {:else}
-          <div class="user-avatar user-avatar-initial">{myUsername.charAt(0).toUpperCase()}</div>
+          <div class="user-avatar user-avatar-initial" style="background:linear-gradient(135deg, {(myColor||'#60a5fa')}55, {(myColor||'#60a5fa')}22);color:{myColor || '#60a5fa'};border-color:{myColor || 'transparent'}">{myUsername.charAt(0).toUpperCase()}</div>
         {/if}
         {#if !sidebarCollapsed}
           <div class="user-info">
@@ -1756,68 +1857,210 @@
 
               {#if fichesContentTab === 'torrents'}
                 {#if fichesContent.torrents?.torrents?.length}
-                  <div class="content-grid">
-                    {#each fichesContent.torrents.torrents as t}
-                      <div class="content-card">
-                        <div class="cc-body">
-                          <div class="cc-head">
-                            <span class="cc-id">#{t.id}</span>
-                            {#if t.qual?.qual}<span class="cc-chip cc-chip-qual">{t.qual.qual}</span>{/if}
-                            {#if t.saison || t.episode}<span class="cc-chip cc-chip-se">S{String(t.saison||0).padStart(2,'0')}E{String(t.episode||0).padStart(2,'0')}</span>{/if}
-                            {#if t.full_saison}<span class="cc-chip cc-chip-se">Saison complète</span>{/if}
-                            {#if t.size || t.taille}<span class="cc-chip cc-chip-size">{fmtSize(t.size || t.taille)}</span>{/if}
-                            {#if (t.seeders ?? null) !== null}
-                              <span class="cc-chip cc-chip-seed" style="color:{(t.seeders||0)===0?'#ff6b6b':((t.seeders||0)<=2?'#ffd60a':'#7ef0c0')}">🌱 {t.seeders||0}</span>
-                            {/if}
-                          </div>
-                          <div class="cc-name" title={t.torrent_name || t.name || ''}>{t.torrent_name || t.name || '(sans nom)'}</div>
-                          <div class="cc-tags">
-                            {#each (t.langues_compact || []) as la}<span class="cc-tag cc-tag-lang">{langFlag(la.name)} {la.name}</span>{/each}
-                            {#each (t.subs_compact || []) as s}<span class="cc-tag cc-tag-sub">💬 {s.name}</span>{/each}
-                            {#if t.author}<span class="cc-tag cc-tag-author">👤 {t.author}</span>{/if}
-                          </div>
+                  {#if fichesSelected.type === 'series'}
+                    {#each groupBySeason(fichesContent.torrents.torrents) as sg (sg.season)}
+                      <details class="season-group" open>
+                        <summary class="season-summary">
+                          <span class="season-chevron">▶</span>
+                          <span class="season-title">📺 Saison {String(sg.season).padStart(2,'0')}</span>
+                          <span class="season-count">{sg.items.length} torrent{sg.items.length > 1 ? 's' : ''}</span>
+                        </summary>
+                        <div class="content-grid">
+                          {#each sg.items as t}
+                            <div class="content-card">
+                              <div class="cc-body">
+                                <div class="cc-head">
+                                  <span class="cc-id">#{t.id}</span>
+                                  {#if t.qual?.qual}<span class="cc-chip cc-chip-qual">{t.qual.qual}</span>{/if}
+                                  {#if t.saison || t.episode}<span class="cc-chip cc-chip-se">S{String(t.saison||0).padStart(2,'0')}E{String(t.episode||0).padStart(2,'0')}</span>{/if}
+                                  {#if t.full_saison}<span class="cc-chip cc-chip-se">Saison complète</span>{/if}
+                                  {#if t.size || t.taille}<span class="cc-chip cc-chip-size">{fmtSize(t.size || t.taille)}</span>{/if}
+                                  {#if (t.seeders ?? null) !== null}
+                                    <span class="cc-chip cc-chip-seed" style="color:{(t.seeders||0)===0?'#ff6b6b':((t.seeders||0)<=2?'#ffd60a':'#7ef0c0')}">🌱 {t.seeders||0}</span>
+                                  {/if}
+                                </div>
+                                <div class="cc-name" title={t.torrent_name || t.name || ''}>{t.torrent_name || t.name || '(sans nom)'}</div>
+                                <div class="cc-tags">
+                                  {#each (t.langues_compact || []) as la}<span class="cc-tag cc-tag-lang">{langFlag(la.name)} {la.name}</span>{/each}
+                                  {#each (t.subs_compact || []) as s}<span class="cc-tag cc-tag-sub">💬 {s.name}</span>{/each}
+                                  {#if t.author}<span class="cc-tag cc-tag-author">👤 {t.author}</span>{/if}
+                                </div>
+                              </div>
+                              <div class="cc-actions">
+                                <button class="btn-test btn-icon" title="Voir le NFO" on:click={() => openNfo('torrents', t.id, t.torrent_name || t.name || '')}>ⓘ</button>
+                                <button class="btn-test" on:click={() => downloadLienFromFiche({id:t.id, download_url:t.download_url, name:(t.torrent_name || t.name || ('torrent-'+t.id)) + '.torrent'})}>⬇ Torrent</button>
+                              </div>
+                            </div>
+                          {/each}
                         </div>
-                        <div class="cc-actions">
-                          <button class="btn-test btn-icon" title="Voir le NFO" on:click={() => openNfo('torrents', t.id, t.torrent_name || t.name || '')}>ⓘ</button>
-                          <button class="btn-test" on:click={() => downloadLienFromFiche({id:t.id, download_url:t.download_url, name:(t.torrent_name || t.name || ('torrent-'+t.id)) + '.torrent'})}>⬇ Torrent</button>
-                        </div>
-                      </div>
+                      </details>
                     {/each}
-                  </div>
+                  {:else}
+                    <div class="content-grid">
+                      {#each fichesContent.torrents.torrents as t}
+                        <div class="content-card">
+                          <div class="cc-body">
+                            <div class="cc-head">
+                              <span class="cc-id">#{t.id}</span>
+                              {#if t.qual?.qual}<span class="cc-chip cc-chip-qual">{t.qual.qual}</span>{/if}
+                              {#if t.saison || t.episode}<span class="cc-chip cc-chip-se">S{String(t.saison||0).padStart(2,'0')}E{String(t.episode||0).padStart(2,'0')}</span>{/if}
+                              {#if t.full_saison}<span class="cc-chip cc-chip-se">Saison complète</span>{/if}
+                              {#if t.size || t.taille}<span class="cc-chip cc-chip-size">{fmtSize(t.size || t.taille)}</span>{/if}
+                              {#if (t.seeders ?? null) !== null}
+                                <span class="cc-chip cc-chip-seed" style="color:{(t.seeders||0)===0?'#ff6b6b':((t.seeders||0)<=2?'#ffd60a':'#7ef0c0')}">🌱 {t.seeders||0}</span>
+                              {/if}
+                            </div>
+                            <div class="cc-name" title={t.torrent_name || t.name || ''}>{t.torrent_name || t.name || '(sans nom)'}</div>
+                            <div class="cc-tags">
+                              {#each (t.langues_compact || []) as la}<span class="cc-tag cc-tag-lang">{langFlag(la.name)} {la.name}</span>{/each}
+                              {#each (t.subs_compact || []) as s}<span class="cc-tag cc-tag-sub">💬 {s.name}</span>{/each}
+                              {#if t.author}<span class="cc-tag cc-tag-author">👤 {t.author}</span>{/if}
+                            </div>
+                          </div>
+                          <div class="cc-actions">
+                            <button class="btn-test btn-icon" title="Voir le NFO" on:click={() => openNfo('torrents', t.id, t.torrent_name || t.name || '')}>ⓘ</button>
+                            <button class="btn-test" on:click={() => downloadLienFromFiche({id:t.id, download_url:t.download_url, name:(t.torrent_name || t.name || ('torrent-'+t.id)) + '.torrent'})}>⬇ Torrent</button>
+                          </div>
+                        </div>
+                      {/each}
+                    </div>
+                  {/if}
                 {:else}
                   <div style="color:var(--text3);font-size:12px">Aucun torrent partagé via API pour cette fiche.</div>
                 {/if}
               {:else if fichesContentTab === 'nzbs'}
                 {#if fichesContent.nzbs?.nzbs?.length}
-                  <div class="content-grid">
-                    {#each fichesContent.nzbs.nzbs as n}
-                      <div class="content-card">
-                        <div class="cc-body">
-                          <div class="cc-head">
-                            <span class="cc-id">#{n.id}</span>
-                            {#if n.qual?.qual}<span class="cc-chip cc-chip-qual">{n.qual.qual}</span>{/if}
-                            {#if n.saison || n.episode}<span class="cc-chip cc-chip-se">S{String(n.saison||0).padStart(2,'0')}E{String(n.episode||0).padStart(2,'0')}</span>{/if}
-                            {#if n.size || n.taille}<span class="cc-chip cc-chip-size">{fmtSize(n.size || n.taille)}</span>{/if}
-                          </div>
-                          <div class="cc-name" title={n.name || ''}>{n.name || '(sans nom)'}</div>
-                          <div class="cc-tags">
-                            {#each (n.langues_compact || []) as la}<span class="cc-tag cc-tag-lang">{langFlag(la.name)} {la.name}</span>{/each}
-                            {#each (n.subs_compact || []) as s}<span class="cc-tag cc-tag-sub">💬 {s.name}</span>{/each}
-                            {#if n.author || n.id_user}<span class="cc-tag cc-tag-author">👤 {n.author || n.id_user}</span>{/if}
-                          </div>
+                  {#if fichesSelected.type === 'series'}
+                    {#each groupBySeason(fichesContent.nzbs.nzbs) as sg (sg.season)}
+                      <details class="season-group" open>
+                        <summary class="season-summary">
+                          <span class="season-chevron">▶</span>
+                          <span class="season-title">📺 Saison {String(sg.season).padStart(2,'0')}</span>
+                          <span class="season-count">{sg.items.length} NZB</span>
+                        </summary>
+                        <div class="content-grid">
+                          {#each sg.items as n}
+                            <div class="content-card">
+                              <div class="cc-body">
+                                <div class="cc-head">
+                                  <span class="cc-id">#{n.id}</span>
+                                  {#if n.qual?.qual}<span class="cc-chip cc-chip-qual">{n.qual.qual}</span>{/if}
+                                  {#if n.saison || n.episode}<span class="cc-chip cc-chip-se">S{String(n.saison||0).padStart(2,'0')}E{String(n.episode||0).padStart(2,'0')}</span>{/if}
+                                  {#if n.size || n.taille}<span class="cc-chip cc-chip-size">{fmtSize(n.size || n.taille)}</span>{/if}
+                                </div>
+                                <div class="cc-name" title={n.name || ''}>{n.name || '(sans nom)'}</div>
+                                {#if nzbFilenames[n.id]?.state === 'ok' && nzbFilenames[n.id].files?.length}
+                                  {@const main = nzbFilenames[n.id].files.find(f => /\.(mkv|mp4|avi)$/i.test(f.filename)) || nzbFilenames[n.id].files[0]}
+                                  <div class="cc-name cc-name-mono cc-sub-url" title={main.filename}>📁 {main.filename}</div>
+                                  {#if nzbFilenames[n.id].files.length > 1}
+                                    <div class="cc-name-loading">+ {nzbFilenames[n.id].files.length - 1} autre(s) fichier(s)</div>
+                                  {/if}
+                                {:else if nzbFilenames[n.id]?.state === 'loading'}
+                                  <div class="cc-name-loading">⏳ Lecture du NZB…</div>
+                                {/if}
+                                <div class="cc-tags">
+                                  {#each (n.langues_compact || []) as la}<span class="cc-tag cc-tag-lang">{langFlag(la.name)} {la.name}</span>{/each}
+                                  {#each (n.subs_compact || []) as s}<span class="cc-tag cc-tag-sub">💬 {s.name}</span>{/each}
+                                  {#if n.author || n.id_user}<span class="cc-tag cc-tag-author">👤 {n.author || n.id_user}</span>{/if}
+                                </div>
+                              </div>
+                              <div class="cc-actions">
+                                <button class="btn-test btn-icon" title="Voir le NFO" on:click={() => openNfo('nzbs', n.id, n.name || '')}>ⓘ</button>
+                                <button class="btn-test" on:click={() => downloadLienFromFiche({id:n.id, download_url:n.download_url, name:(n.name || ('nzb-'+n.id)) + '.nzb'})}>⬇ NZB</button>
+                              </div>
+                            </div>
+                          {/each}
                         </div>
-                        <div class="cc-actions">
-                          <button class="btn-test btn-icon" title="Voir le NFO" on:click={() => openNfo('nzbs', n.id, n.name || '')}>ⓘ</button>
-                          <button class="btn-test" on:click={() => downloadLienFromFiche({id:n.id, download_url:n.download_url, name:(n.name || ('nzb-'+n.id)) + '.nzb'})}>⬇ NZB</button>
-                        </div>
-                      </div>
+                      </details>
                     {/each}
-                  </div>
+                  {:else}
+                    <div class="content-grid">
+                      {#each fichesContent.nzbs.nzbs as n}
+                        <div class="content-card">
+                          <div class="cc-body">
+                            <div class="cc-head">
+                              <span class="cc-id">#{n.id}</span>
+                              {#if n.qual?.qual}<span class="cc-chip cc-chip-qual">{n.qual.qual}</span>{/if}
+                              {#if n.saison || n.episode}<span class="cc-chip cc-chip-se">S{String(n.saison||0).padStart(2,'0')}E{String(n.episode||0).padStart(2,'0')}</span>{/if}
+                              {#if n.size || n.taille}<span class="cc-chip cc-chip-size">{fmtSize(n.size || n.taille)}</span>{/if}
+                            </div>
+                            <div class="cc-name" title={n.name || ''}>{n.name || '(sans nom)'}</div>
+                            {#if nzbFilenames[n.id]?.state === 'ok' && nzbFilenames[n.id].files?.length}
+                              {@const main = nzbFilenames[n.id].files.find(f => /\.(mkv|mp4|avi)$/i.test(f.filename)) || nzbFilenames[n.id].files[0]}
+                              <div class="cc-name cc-name-mono cc-sub-url" title={main.filename}>📁 {main.filename}</div>
+                              {#if nzbFilenames[n.id].files.length > 1}
+                                <div class="cc-name-loading">+ {nzbFilenames[n.id].files.length - 1} autre(s) fichier(s)</div>
+                              {/if}
+                            {:else if nzbFilenames[n.id]?.state === 'loading'}
+                              <div class="cc-name-loading">⏳ Lecture du NZB…</div>
+                            {/if}
+                            <div class="cc-tags">
+                              {#each (n.langues_compact || []) as la}<span class="cc-tag cc-tag-lang">{langFlag(la.name)} {la.name}</span>{/each}
+                              {#each (n.subs_compact || []) as s}<span class="cc-tag cc-tag-sub">💬 {s.name}</span>{/each}
+                              {#if n.author || n.id_user}<span class="cc-tag cc-tag-author">👤 {n.author || n.id_user}</span>{/if}
+                            </div>
+                          </div>
+                          <div class="cc-actions">
+                            <button class="btn-test btn-icon" title="Voir le NFO" on:click={() => openNfo('nzbs', n.id, n.name || '')}>ⓘ</button>
+                            <button class="btn-test" on:click={() => downloadLienFromFiche({id:n.id, download_url:n.download_url, name:(n.name || ('nzb-'+n.id)) + '.nzb'})}>⬇ NZB</button>
+                          </div>
+                        </div>
+                      {/each}
+                    </div>
+                  {/if}
                 {:else}
                   <div style="color:var(--text3);font-size:12px">Aucun NZB partagé via API pour cette fiche.</div>
                 {/if}
               {:else if fichesContentTab === 'liens'}
                 {#if fichesContent.liens?.liens?.length}
+                  {#if fichesSelected.type === 'series'}
+                    {#each groupBySeason(fichesContent.liens.liens) as sg (sg.season)}
+                      <details class="season-group" open>
+                        <summary class="season-summary">
+                          <span class="season-chevron">▶</span>
+                          <span class="season-title">📺 Saison {String(sg.season).padStart(2,'0')}</span>
+                          <span class="season-count">{sg.items.length} DDL</span>
+                        </summary>
+                        <div class="content-grid">
+                          {#each sg.items as l}
+                            <div class="content-card">
+                              <div class="cc-body">
+                                <div class="cc-head">
+                                  <span class="cc-id">#{l.id}</span>
+                                  {#if l.qual?.qual}<span class="cc-chip cc-chip-qual">{l.qual.qual}</span>{/if}
+                                  {#if l.saison || l.episode}<span class="cc-chip cc-chip-se">S{String(l.saison||0).padStart(2,'0')}E{String(l.episode||0).padStart(2,'0')}</span>{/if}
+                                  {#if l.full_saison}<span class="cc-chip cc-chip-se">Saison complète</span>{/if}
+                                  {#if l.taille}<span class="cc-chip cc-chip-size">{fmtSize(l.taille)}</span>{/if}
+                                  {#if l.host?.name || l.id_host}<span class="cc-chip cc-chip-host">{l.host?.name || ('host#'+l.id_host)}</span>{/if}
+                                </div>
+                                {#if ddlFilenames[l.id]?.state === 'ok'}
+                                  <div class="cc-name" title={ddlFilenames[l.id].filename}>{ddlFilenames[l.id].filename}</div>
+                                  <div class="cc-name cc-name-mono cc-sub-url" title={l.lien || ''}>{l.lien}</div>
+                                {:else if ddlFilenames[l.id]?.state === 'loading'}
+                                  <div class="cc-name cc-name-mono cc-sub-url">{l.lien}</div>
+                                  <div class="cc-name-loading">⏳ Résolution du nom du fichier…</div>
+                                {:else if ddlFilenames[l.id]?.state === 'err'}
+                                  <div class="cc-name cc-name-mono cc-sub-url">{l.lien}</div>
+                                  <div class="cc-name-loading" style="color:#ff9585" title={ddlFilenames[l.id].error}>⚠ {ddlFilenames[l.id].error.length > 80 ? ddlFilenames[l.id].error.slice(0,80)+'…' : ddlFilenames[l.id].error}</div>
+                                {:else}
+                                  <div class="cc-name cc-name-mono" title={l.lien || ''}>{l.lien || '(URL masquée — clic Ouvrir pour résoudre)'}</div>
+                                {/if}
+                                <div class="cc-tags">
+                                  {#each (l.langues_compact || []) as la}<span class="cc-tag cc-tag-lang">{langFlag(la.name)} {la.name}</span>{/each}
+                                  {#each (l.subs_compact || []) as s}<span class="cc-tag cc-tag-sub">💬 {s.name}</span>{/each}
+                                  {#if l.id_user}<span class="cc-tag cc-tag-author">👤 {l.id_user}</span>{/if}
+                                </div>
+                              </div>
+                              <div class="cc-actions">
+                                <button class="btn-test btn-icon" title="Voir le NFO" on:click={() => openNfo('liens', l.id, l.lien || '')}>ⓘ</button>
+                                <button class="btn-test" on:click={() => OpenBrowser(l.lien)} disabled={!l.lien}>🌐 Ouvrir</button>
+                              </div>
+                            </div>
+                          {/each}
+                        </div>
+                      </details>
+                    {/each}
+                  {:else}
                   <div class="content-grid">
                     {#each fichesContent.liens.liens as l}
                       <div class="content-card">
@@ -1855,6 +2098,7 @@
                       </div>
                     {/each}
                   </div>
+                  {/if}
                 {:else}
                   <div style="color:var(--text3);font-size:12px">Aucun DDL partagé via API pour cette fiche.</div>
                 {/if}
@@ -1870,10 +2114,14 @@
         {/if}
       </div>
 
-    <!-- ===== DEMANDES DE RESEED ===== -->
-    {:else if activeTab === 'requests'}
+    <!-- ===== RESEED : Demandes team (sous-onglet) ===== -->
+    {:else if activeTab === 'reseed' && reseedSubTab === 'requests'}
       <div class="tab-content">
-        <h2>📋 Demandes de reseed</h2>
+        <h2>♻️ Reseed</h2>
+        <div class="sub-tabs-nav">
+          <button class:active={reseedSubTab === 'requests'} on:click={() => reseedSubTab = 'requests'}>📋 Demandes team</button>
+          <button class:active={reseedSubTab === 'url'} on:click={() => reseedSubTab = 'url'}>🔗 Depuis URL</button>
+        </div>
         <div class="section">
           <div class="section-header"><span>Filtres</span></div>
           <div class="field" style="display:flex;gap:6px;flex-wrap:wrap">
@@ -2100,9 +2348,11 @@
     {:else if activeTab === 'nexum'}
       <div class="tab-content">
         <h2>🟪 Nexum</h2>
-        <div class="section" style="text-align:center;padding:40px 20px">
-          <div style="font-size:48px;margin-bottom:14px">🟪</div>
-          <div style="font-size:15px;font-weight:600;color:var(--text);margin-bottom:8px">Onglet Nexum — Work in progress</div>
+        <div class="nexum-hero">
+          <div class="nexum-logo-wrapper">
+            <img src={nexumLogo} alt="Nexum" class="nexum-logo" />
+          </div>
+          <div style="font-size:16px;font-weight:600;color:var(--text);margin-bottom:8px;letter-spacing:1px">NEXUM — Work in progress</div>
           <div style="color:var(--text3);font-size:12.5px;max-width:480px;margin:0 auto;line-height:1.6">
             Espace réservé pour les fonctionnalités Nexum (tracker secondaire).<br>
             À définir : tes stats perso, classement, match avec Hydracker, upload cross-tracker, etc.
@@ -2110,10 +2360,14 @@
         </div>
       </div>
 
-    <!-- ===== LOG API ===== -->
-    {:else if activeTab === 'apilog'}
+    <!-- ===== LOGS : Requêtes API (sous-onglet) ===== -->
+    {:else if activeTab === 'logs' && logsSubTab === 'api'}
       <div class="tab-content">
-        <h2>🔬 Log API</h2>
+        <h2>🔬 Logs</h2>
+        <div class="sub-tabs-nav">
+          <button class:active={logsSubTab === 'journal'} on:click={() => logsSubTab = 'journal'}>📋 Journal app</button>
+          <button class:active={logsSubTab === 'api'} on:click={() => logsSubTab = 'api'}>🔬 Requêtes API</button>
+        </div>
         <div class="section">
           <div class="section-header">
             <span>Requêtes capturées ({filteredApiLogs.length}/{apiLogs.length})</span>
@@ -2197,10 +2451,14 @@
         {/if}
       </div>
 
-    <!-- ===== RESEED ===== -->
-    {:else if activeTab === 'reseed'}
+    <!-- ===== RESEED : Depuis URL (sous-onglet) ===== -->
+    {:else if activeTab === 'reseed' && reseedSubTab === 'url'}
       <div class="tab-content">
         <h2>♻️ Reseed</h2>
+        <div class="sub-tabs-nav">
+          <button class:active={reseedSubTab === 'requests'} on:click={() => reseedSubTab = 'requests'}>📋 Demandes team</button>
+          <button class:active={reseedSubTab === 'url'} on:click={() => reseedSubTab = 'url'}>🔗 Depuis URL</button>
+        </div>
 
         <!-- Auto-reseed : workflow 1 clic depuis un ID / URL Hydracker.
              L'app liste les torrents dispos, choisit le meilleur (FR + qualité),
@@ -2592,12 +2850,31 @@
             <button class="filter-btn" class:active={checkFilter === 'inactive'} on:click={() => checkFilter = 'inactive'}>
               Inactif <span class="filter-count">{checkTorrents.filter(t => isIncomplete(t)).length}</span>
             </button>
+            <div style="flex:1"></div>
+            <label style="font-size:12px;color:var(--text3);display:flex;align-items:center;gap:6px">
+              Trier :
+              <select bind:value={checkSort} style="font-size:12px;padding:4px 8px">
+                <option value="seeds_desc">🌱 Seeds (+ → -)</option>
+                <option value="seeds_asc">🌱 Seeds (- → +)</option>
+                <option value="size_desc">📦 Taille (+ → -)</option>
+                <option value="name">🔤 Nom A-Z</option>
+              </select>
+            </label>
           </div>
         {/if}
         {#if !checkTorrents.length && !checkLoading}
           <p class="coming-soon">Clique sur <b>Charger</b> pour lister les torrents de la seedbox.</p>
         {:else}
-          {#each filteredCheckTorrents as t (t.hash)}
+          {#if filteredCheckTorrents.length > checkPageSize}
+            <div class="check-pagination">
+              <button class="btn-test" on:click={() => checkPage = Math.max(1, checkPage - 1)} disabled={checkPage <= 1}>← Préc</button>
+              <span style="color:var(--text2);font-size:12px">
+                Page {checkPage} / {checkTotalPages} — {filteredCheckTorrents.length} torrent{filteredCheckTorrents.length > 1 ? 's' : ''} ({(checkPage - 1) * checkPageSize + 1}–{Math.min(checkPage * checkPageSize, filteredCheckTorrents.length)})
+              </span>
+              <button class="btn-test" on:click={() => checkPage = Math.min(checkTotalPages, checkPage + 1)} disabled={checkPage >= checkTotalPages}>Suiv →</button>
+            </div>
+          {/if}
+          {#each pagedCheckTorrents as t (t.hash)}
             {@const st = checkState[t.hash] || {}}
             <div class="chk-card" class:err={t.has_error} class:ok={!t.has_error}>
               <div class="chk-head">
@@ -2947,6 +3224,51 @@
               </div>
             </div>
           {/if}
+
+          <!-- ===== Mon mot de passe ===== -->
+          <div style="font-size:11px;color:var(--text3);margin:4px 0 8px;text-transform:uppercase;letter-spacing:0.5px">🔐 Mon compte</div>
+          <div class="section">
+            <div class="section-header">
+              <span>Changer mon mot de passe</span>
+            </div>
+            <div style="color:var(--text3);font-size:12px;line-height:1.5;margin-bottom:10px">
+              Génère un nouveau hash pour ton compte <b>{myUsername}</b> et produit un <code>team.json</code> complet à coller sur GitHub.
+              Les autres users conservent leur mdp actuel.
+            </div>
+            <div class="field">
+              <label for="mypwd-new">Nouveau mot de passe</label>
+              <input id="mypwd-new" type="password" bind:value={changePwdValue} placeholder="Au moins 8 caractères recommandés" autocomplete="new-password" />
+            </div>
+            <div class="field">
+              <label for="mypwd-confirm">Confirmer</label>
+              <input id="mypwd-confirm" type="password" bind:value={changePwdConfirm} placeholder="Retaper le nouveau mot de passe" autocomplete="new-password" />
+            </div>
+            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:4px">
+              <button class="btn-save" on:click={doChangePassword}
+                disabled={!changePwdValue || changePwdValue !== changePwdConfirm || changePwdLoading}>
+                {changePwdLoading ? '…' : '🔒 Générer le team.json'}
+              </button>
+              {#if changePwdValue && changePwdConfirm && changePwdValue !== changePwdConfirm}
+                <span style="color:#ff9585;font-size:12px">⚠ Les mots de passe ne correspondent pas</span>
+              {/if}
+              {#if changePwdError}
+                <span style="color:#ff9585;font-size:12px">⚠ {changePwdError}</span>
+              {/if}
+              {#if changePwdSuccess}
+                <span style="color:#7ef0c0;font-size:12px">✅ Copié — colle sur GitHub</span>
+              {/if}
+            </div>
+            {#if changePwdOutput}
+              <div style="margin-top:10px">
+                <label style="font-size:11px;color:var(--text3)">team.json complet à coller sur GitHub</label>
+                <textarea readonly rows="10" class="mgr-output">{changePwdOutput}</textarea>
+                <div style="margin-top:6px">
+                  <button class="btn-test" on:click={() => { navigator.clipboard.writeText(changePwdOutput); changePwdSuccess = true }}>📋 Recopier</button>
+                  <button class="btn-test" on:click={() => OpenBrowser('https://github.com/Gandalfleblanc/Go-Post-Tools/edit/main/team.json')}>→ Ouvrir team.json sur GitHub</button>
+                </div>
+              </div>
+            {/if}
+          </div>
 
           <!-- ===== Clés API ===== -->
           <div style="font-size:11px;color:var(--text3);margin:0 0 8px;text-transform:uppercase;letter-spacing:0.5px">🔑 Clés API</div>
@@ -3395,10 +3717,14 @@
         </button>
       </div>
 
-    <!-- ===== JOURNAL ===== -->
-    {:else if activeTab === 'log'}
+    <!-- ===== LOGS : Journal app (sous-onglet) ===== -->
+    {:else if activeTab === 'logs' && logsSubTab === 'journal'}
       <div class="tab-content">
-        <h2>Journal d'activité</h2>
+        <h2>🔬 Logs</h2>
+        <div class="sub-tabs-nav">
+          <button class:active={logsSubTab === 'journal'} on:click={() => logsSubTab = 'journal'}>📋 Journal app</button>
+          <button class:active={logsSubTab === 'api'} on:click={() => logsSubTab = 'api'}>🔬 Requêtes API</button>
+        </div>
         {#if $logEntries.length === 0}
           <p class="coming-soon">Les logs en temps réel apparaîtront ici</p>
         {:else}
@@ -4414,6 +4740,99 @@
   }
   .btn-logout:hover { background: rgba(255, 107, 107, 0.14); color: #ffb8b8; }
   .sidebar.collapsed .btn-logout { padding: 7px 4px; }
+
+  .nexum-hero {
+    text-align: center;
+    padding: 56px 20px 40px;
+    background: radial-gradient(ellipse at center, rgba(167,139,250,0.08) 0%, rgba(0,0,0,0) 60%);
+    border: 1px solid var(--border);
+    border-radius: 18px;
+  }
+  .nexum-logo-wrapper {
+    position: relative;
+    width: 220px; height: 220px;
+    margin: 0 auto 28px;
+    display: flex; align-items: center; justify-content: center;
+    filter: drop-shadow(0 18px 48px rgba(167,139,250,0.25));
+    animation: nexum-float 4s ease-in-out infinite;
+  }
+  .nexum-logo {
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: contain;
+    /* Masque le petit élément gris en bas à droite de l'image */
+    -webkit-mask-image: linear-gradient(to bottom right, #000 70%, transparent 92%);
+    mask-image: linear-gradient(to bottom right, #000 70%, transparent 92%);
+  }
+  @keyframes nexum-float {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-8px); }
+  }
+
+  .check-pagination {
+    display: flex; align-items: center; justify-content: center; gap: 14px;
+    margin: 10px 0 16px;
+    padding: 10px;
+    background: rgba(255,255,255,0.02);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+  }
+
+  /* Sections dépliables par saison (Fiches séries) */
+  .season-group {
+    margin-bottom: 12px;
+    border-radius: 10px;
+    overflow: hidden;
+    border: 1px solid var(--border);
+  }
+  .season-summary {
+    display: flex; align-items: center; gap: 12px;
+    padding: 10px 14px;
+    background: rgba(255,255,255,0.03);
+    cursor: pointer;
+    list-style: none;
+    user-select: none;
+    transition: background 0.15s ease;
+  }
+  .season-summary::-webkit-details-marker { display: none; }
+  .season-summary:hover { background: rgba(255,255,255,0.06); }
+  .season-chevron {
+    font-size: 10px; color: var(--text3);
+    transition: transform 0.2s ease;
+    display: inline-block;
+  }
+  .season-group[open] .season-chevron { transform: rotate(90deg); }
+  .season-title { font-weight: 700; font-size: 14px; color: var(--text); }
+  .season-count {
+    font-size: 11px; color: var(--text3);
+    background: rgba(255,255,255,0.06);
+    padding: 2px 10px; border-radius: 10px;
+    margin-left: auto;
+  }
+  .season-group > .content-grid { padding: 12px; }
+
+  /* Sous-onglets (Reseed, Logs) */
+  .sub-tabs-nav {
+    display: flex; gap: 4px;
+    margin: -6px 0 18px;
+    padding: 4px;
+    background: rgba(255,255,255,0.03);
+    border-radius: 10px;
+    width: fit-content;
+  }
+  .sub-tabs-nav button {
+    background: transparent; border: 0;
+    color: var(--text3);
+    padding: 7px 14px; font-size: 12px; font-weight: 600;
+    border-radius: 7px; cursor: pointer;
+    transition: all 0.2s ease;
+  }
+  .sub-tabs-nav button:hover { color: var(--text); background: rgba(255,255,255,0.04); }
+  .sub-tabs-nav button.active {
+    background: var(--bg2);
+    color: var(--text);
+    box-shadow: 0 2px 8px -2px rgba(0,0,0,0.4), 0 0 0 1px var(--border);
+  }
 
   /* ===== Manager tab ===== */
   .manager-tabs {

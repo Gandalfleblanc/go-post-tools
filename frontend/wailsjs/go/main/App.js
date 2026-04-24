@@ -30,6 +30,10 @@ export function CancelDDLHost(arg1) {
   return window['go']['main']['App']['CancelDDLHost'](arg1);
 }
 
+export function ChangeMyPassword(arg1) {
+  return window['go']['main']['App']['ChangeMyPassword'](arg1);
+}
+
 export function CheckForUpdate() {
   return window['go']['main']['App']['CheckForUpdate']();
 }
@@ -76,6 +80,10 @@ export function DownloadToDownloads(arg1, arg2) {
 
 export function DownloadUpdate() {
   return window['go']['main']['App']['DownloadUpdate']();
+}
+
+export function FetchHydrackerAvatar() {
+  return window['go']['main']['App']['FetchHydrackerAvatar']();
 }
 
 export function FetchImageBase64(arg1) {
@@ -132,6 +140,10 @@ export function GetMyUsername() {
 
 export function GetNexumIndex() {
   return window['go']['main']['App']['GetNexumIndex']();
+}
+
+export function GetNzbFilenames(arg1) {
+  return window['go']['main']['App']['GetNzbFilenames'](arg1);
 }
 
 export function GetTeamConfig() {

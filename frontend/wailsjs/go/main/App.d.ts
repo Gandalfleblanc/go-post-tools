@@ -23,6 +23,8 @@ export function CancelAllWorkflows():Promise<void>;
 
 export function CancelDDLHost(arg1:string):Promise<void>;
 
+export function ChangeMyPassword(arg1:string):Promise<string>;
+
 export function CheckForUpdate():Promise<main.UpdateInfo>;
 
 export function ClearLihdlSettingsPassword(arg1:string):Promise<void>;
@@ -46,6 +48,8 @@ export function DeleteTorrentAndFTP(arg1:number):Promise<main.DeleteTorrentResul
 export function DownloadToDownloads(arg1:string,arg2:string):Promise<string>;
 
 export function DownloadUpdate():Promise<string>;
+
+export function FetchHydrackerAvatar():Promise<string>;
 
 export function FetchImageBase64(arg1:string):Promise<string>;
 
@@ -74,6 +78,8 @@ export function GetMetaSubs():Promise<Array<api.Lang>>;
 export function GetMyUsername():Promise<string>;
 
 export function GetNexumIndex():Promise<main.NexumIndex>;
+
+export function GetNzbFilenames(arg1:number):Promise<Array<main.NzbFileEntry>>;
 
 export function GetTeamConfig():Promise<main.TeamConfig>;
 
