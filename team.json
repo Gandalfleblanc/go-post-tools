@@ -91,17 +91,17 @@
     {
       "pseudo": "Noxako",
       "role": "co-admin",
-      "password_hash": "$2a$12$UPN1Euc7pGoZSRtRJaNPpuHxUwQnVmcKZ6q.23KmTzD2vromb3g/S"
+      "password_hash": "$2a$12$zxzo1TGj0pLs9CjD9RrjXe4k2fZW9FUNj7Id67hvucMHt49K2j9fm"
     },
     {
       "pseudo": "Karo",
       "role": "co-admin",
-      "password_hash": "$2a$12$SKvcr2H5d9JxVZy9nHSeduRUsOKlJMNKJPP16Nw9L2WsOEXTuXEwu"
+      "password_hash": "$2a$12$Ff1fht8yMtDVRsLlnLZKG.3xHI5eNUWpVm2qQ9i7i1mRTMMSI0ZMq"
     },
     {
       "pseudo": "Terminator17754",
       "role": "modo",
-      "password_hash": "$2a$12$xla8I/v.vLb89dPgJkSAhuFnQUOU69vC06UGuyR40A84ho2UohDOi"
+      "password_hash": "$2a$12$6R6mAhR5K3649eB7r1UOxuff/txhTWPgynQYSc6danS4pTxsJR7ya"
     }
   ]
 }
