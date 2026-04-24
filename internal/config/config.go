@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 type Config struct {
@@ -170,6 +171,7 @@ func Load() *Config {
 		ParParThreads:   8,
 		ParParSliceSize: 768000,
 		FTPPort:         21,
+		FTPModPort:      21,
 		TorrentPieceSize: 8 * 1024 * 1024, // 8 MiB
 		NexumBaseURL:    "https://nexum-core.com",
 		TMDBProxyURL:    "https://tmdb.uklm.xyz",
@@ -180,68 +182,33 @@ func Load() *Config {
 		_ = json.Unmarshal(data, cfg)
 	}
 	// Override avec les defaults bakés au build SI ils sont définis (non-vides).
-	// Sinon préserve la valeur user. Comme ça :
-	//  - si la team déploie une version avec creds bakés → tout le monde
-	//    a les bonnes valeurs au démarrage (override les user qui auraient
-	//    saisi/conservé une vieille valeur fausse)
-	//  - si build sans secret (dev local par ex) → chaque user garde son perso
-	if DefaultFTPHost != "" {
-		cfg.FTPHost = DefaultFTPHost
+	// Les secrets GitHub peuvent contenir des whitespaces/newlines parasites
+	// à cause du paste/UI — on trim systématiquement pour éviter les
+	// "no such host" ou "auth failed" mystérieux.
+	override := func(target *string, def string) {
+		if t := strings.TrimSpace(def); t != "" {
+			*target = t
+		}
 	}
-	if DefaultFTPUser != "" {
-		cfg.FTPUser = DefaultFTPUser
-	}
-	if DefaultFTPPassword != "" {
-		cfg.FTPPassword = DefaultFTPPassword
-	}
-	if DefaultFTPPath != "" {
-		cfg.FTPPath = DefaultFTPPath
-	}
-	if DefaultSeedboxURL != "" {
-		cfg.SeedboxURL = DefaultSeedboxURL
-	}
-	if DefaultSeedboxUser != "" {
-		cfg.SeedboxUser = DefaultSeedboxUser
-	}
-	if DefaultSeedboxPassword != "" {
-		cfg.SeedboxPassword = DefaultSeedboxPassword
-	}
-	if DefaultSeedboxLabel != "" {
-		cfg.SeedboxLabel = DefaultSeedboxLabel
-	}
-	if DefaultQBitURL != "" {
-		cfg.QBitURL = DefaultQBitURL
-	}
-	if DefaultQBitUser != "" {
-		cfg.QBitUser = DefaultQBitUser
-	}
-	if DefaultQBitPassword != "" {
-		cfg.QBitPassword = DefaultQBitPassword
-	}
-	if DefaultFTPModHost != "" {
-		cfg.FTPModHost = DefaultFTPModHost
-	}
-	if DefaultFTPModUser != "" {
-		cfg.FTPModUser = DefaultFTPModUser
-	}
-	if DefaultFTPModPassword != "" {
-		cfg.FTPModPassword = DefaultFTPModPassword
-	}
-	if DefaultFTPModPath != "" {
-		cfg.FTPModPath = DefaultFTPModPath
-	}
-	if DefaultTrackerURL != "" {
-		cfg.TrackerURL = DefaultTrackerURL
-	}
-	if DefaultTMDBProxyURL != "" {
-		cfg.TMDBProxyURL = DefaultTMDBProxyURL
-	}
-	if DefaultMediaSearchURL != "" {
-		cfg.MediaSearchURL = DefaultMediaSearchURL
-	}
-	if DefaultTMDBApiKey != "" {
-		cfg.TMDBApiKey = DefaultTMDBApiKey
-	}
+	override(&cfg.FTPHost, DefaultFTPHost)
+	override(&cfg.FTPUser, DefaultFTPUser)
+	override(&cfg.FTPPassword, DefaultFTPPassword)
+	override(&cfg.FTPPath, DefaultFTPPath)
+	override(&cfg.SeedboxURL, DefaultSeedboxURL)
+	override(&cfg.SeedboxUser, DefaultSeedboxUser)
+	override(&cfg.SeedboxPassword, DefaultSeedboxPassword)
+	override(&cfg.SeedboxLabel, DefaultSeedboxLabel)
+	override(&cfg.QBitURL, DefaultQBitURL)
+	override(&cfg.QBitUser, DefaultQBitUser)
+	override(&cfg.QBitPassword, DefaultQBitPassword)
+	override(&cfg.FTPModHost, DefaultFTPModHost)
+	override(&cfg.FTPModUser, DefaultFTPModUser)
+	override(&cfg.FTPModPassword, DefaultFTPModPassword)
+	override(&cfg.FTPModPath, DefaultFTPModPath)
+	override(&cfg.TrackerURL, DefaultTrackerURL)
+	override(&cfg.TMDBProxyURL, DefaultTMDBProxyURL)
+	override(&cfg.MediaSearchURL, DefaultMediaSearchURL)
+	override(&cfg.TMDBApiKey, DefaultTMDBApiKey)
 	return cfg
 }
 
