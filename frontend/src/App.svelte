@@ -2344,10 +2344,10 @@
               <input type="password" value={cfg.hydracker_base_url} disabled readonly />
               <div class="field-hint">URL définie au build — non modifiable.</div>
             </div>
-            <div class="field">
-              <label>Token d'accès</label>
-              <input type="password" value={cfg.hydracker_token} disabled readonly placeholder="— verrouillé —" />
-              <div class="field-hint">Verrouillé — mdp de déverrouillage à venir.</div>
+            <div class="field token-unlocked">
+              <label>Token d'accès <span style="color:#7ef0c0;font-size:10px;font-weight:600">🔓 perso — éditable</span></label>
+              <input type="password" bind:value={cfg.hydracker_token} placeholder="Bearer token" />
+              <div class="field-hint">Chaque user met son propre token Hydracker.</div>
             </div>
           </div>
 
@@ -3197,6 +3197,16 @@
     cursor: not-allowed;
     background: rgba(255, 68, 68, 0.04) !important;
     border-color: rgba(255, 68, 68, 0.2) !important;
+  }
+  /* Exception : les champs dans .token-unlocked restent éditables malgré
+     la section-locked. Utilisé pour le Token Hydracker (perso par user). */
+  .section-locked .token-unlocked input,
+  .section-locked .token-unlocked select,
+  .section-locked .token-unlocked textarea {
+    opacity: 1;
+    cursor: text;
+    background: rgba(126, 240, 192, 0.04) !important;
+    border-color: rgba(126, 240, 192, 0.3) !important;
   }
 
   .btn-test {
