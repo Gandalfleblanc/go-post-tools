@@ -219,6 +219,8 @@ export function TestTMDB(arg1:string):Promise<tester.Result>;
 
 export function TestUsenet(arg1:string,arg2:number):Promise<tester.Result>;
 
+export function TryAutoLogin():Promise<main.AuthResult>;
+
 export function UpdateMyLien(arg1:number,arg2:number,arg3:number,arg4:number,arg5:number,arg6:number):Promise<void>;
 
 export function UpdateMyTorrent(arg1:number,arg2:number,arg3:number,arg4:number,arg5:number,arg6:number):Promise<void>;

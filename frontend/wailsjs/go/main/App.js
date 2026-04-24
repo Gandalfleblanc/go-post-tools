@@ -422,6 +422,10 @@ export function TestUsenet(arg1, arg2) {
   return window['go']['main']['App']['TestUsenet'](arg1, arg2);
 }
 
+export function TryAutoLogin() {
+  return window['go']['main']['App']['TryAutoLogin']();
+}
+
 export function UpdateMyLien(arg1, arg2, arg3, arg4, arg5, arg6) {
   return window['go']['main']['App']['UpdateMyLien'](arg1, arg2, arg3, arg4, arg5, arg6);
 }

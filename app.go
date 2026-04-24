@@ -50,7 +50,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-const Version = "5.2.2"
+const Version = "5.2.3"
 
 type App struct {
 	ctx         context.Context
@@ -1255,6 +1255,74 @@ func resolveRoles(tl *teamList) map[string]RoleDef {
 	return defaultRoles()
 }
 
+// --- Persistance session 24h ---
+//
+// Stocke ~/.config/go-post-tools/session.json avec { pseudo, expires_at } pour
+// éviter de retaper le mdp à chaque lancement. Le fichier ne contient ni hash
+// ni password — juste un pseudo + un timestamp d'expiration. Au prochain
+// lancement, l'app refetch team.json et resolve le rôle pour vérifier que
+// l'user existe toujours et a le bon rôle (en cas de changement côté GitHub).
+
+const sessionDurationHours = 24
+
+type sessionFile struct {
+	Pseudo    string `json:"pseudo"`
+	ExpiresAt int64  `json:"expires_at"`
+}
+
+func sessionFilePath() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	dir := filepath.Join(home, ".config", "go-post-tools")
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "session.json"), nil
+}
+
+func saveSessionFile(pseudo string) {
+	p, err := sessionFilePath()
+	if err != nil {
+		return
+	}
+	s := sessionFile{
+		Pseudo:    pseudo,
+		ExpiresAt: time.Now().Add(time.Hour * time.Duration(sessionDurationHours)).Unix(),
+	}
+	b, err := json.Marshal(s)
+	if err != nil {
+		return
+	}
+	_ = os.WriteFile(p, b, 0600)
+}
+
+func loadSessionFile() *sessionFile {
+	p, err := sessionFilePath()
+	if err != nil {
+		return nil
+	}
+	b, err := os.ReadFile(p)
+	if err != nil {
+		return nil
+	}
+	var s sessionFile
+	if err := json.Unmarshal(b, &s); err != nil {
+		return nil
+	}
+	if s.ExpiresAt < time.Now().Unix() || s.Pseudo == "" {
+		return nil
+	}
+	return &s
+}
+
+func clearSessionFile() {
+	if p, err := sessionFilePath(); err == nil {
+		_ = os.Remove(p)
+	}
+}
+
 // LoginUser : pseudo + mot de passe → vérifie contre team.json (bcrypt).
 // En cas de succès, stocke l'user en session mémoire et le retourne.
 func (a *App) LoginUser(pseudo, password string) (*AuthResult, error) {
@@ -1303,9 +1371,59 @@ func (a *App) LoginUser(pseudo, password string) (*AuthResult, error) {
 		a.sessionMu.Lock()
 		a.currentUser = res
 		a.sessionMu.Unlock()
+		saveSessionFile(res.Username)
 		return res, nil
 	}
 	return nil, fmt.Errorf("pseudo inconnu")
+}
+
+// TryAutoLogin : tente de restaurer la session 24h depuis ~/.config/go-post-tools/session.json.
+// Refetch team.json pour vérifier que l'user existe et récupérer son rôle à jour.
+// Renvoie nil sans erreur si pas de session (flow normal au 1er lancement).
+func (a *App) TryAutoLogin() (*AuthResult, error) {
+	s := loadSessionFile()
+	if s == nil {
+		return nil, nil
+	}
+	tl, err := fetchTeam()
+	if err != nil {
+		return nil, fmt.Errorf("team.json injoignable : %w", err)
+	}
+	roles := resolveRoles(tl)
+	for _, u := range tl.Users {
+		if !strings.EqualFold(u.Pseudo, s.Pseudo) {
+			continue
+		}
+		role := u.Role
+		def, ok := roles[role]
+		if !ok {
+			if userDef, uok := roles["user"]; uok {
+				def = userDef
+				role = "user"
+			} else {
+				def = RoleDef{Badge: "🔵", Color: "#60a5fa", Tabs: []string{"hydracker", "settings"}}
+			}
+		}
+		title := u.Title
+		if title == "" {
+			title = def.Title
+		}
+		res := &AuthResult{
+			Username: u.Pseudo,
+			Role:     role,
+			Title:    title,
+			Badge:    def.Badge,
+			Color:    def.Color,
+			Tabs:     def.Tabs,
+		}
+		a.sessionMu.Lock()
+		a.currentUser = res
+		a.sessionMu.Unlock()
+		return res, nil
+	}
+	// Pseudo plus dans team.json → session invalidée
+	clearSessionFile()
+	return nil, fmt.Errorf("ton compte n'est plus dans team.json — reconnexion requise")
 }
 
 // GetTeamConfig : renvoie la config complète team.json (roles + users sans hash).
@@ -1390,11 +1508,12 @@ func (a *App) BuildTeamJSON(roles map[string]RoleDef, users []TeamUser, newPassw
 	return string(b), nil
 }
 
-// Logout : clear la session mémoire.
+// Logout : clear la session mémoire ET le fichier session 24h.
 func (a *App) Logout() {
 	a.sessionMu.Lock()
 	a.currentUser = nil
 	a.sessionMu.Unlock()
+	clearSessionFile()
 }
 
 // GetCurrentUser : renvoie l'user courant (ou nil si pas connecté).
