@@ -1469,39 +1469,53 @@
 
             <div class="post-field">
               <div class="post-field-label">Uploader via</div>
-              <div class="upload-types">
-                <label class="check-label" title="Workflow team-shared : FTP ADMIN + seedbox ruTorrent de la team">
-                  <input type="checkbox" checked={postUploadTypes.torrent_admin}
-                    on:change={(e) => {
-                      const v = e.currentTarget.checked
-                      postUploadTypes = { ...postUploadTypes, torrent_admin: v, torrent_modo: v?false:postUploadTypes.torrent_modo, torrent_prive: v?false:postUploadTypes.torrent_prive }
-                    }} />
-                  👑 Torrent ADMIN
-                </label>
-                <label class="check-label" title="Workflow team modo : FTP MOD + qBit shared">
-                  <input type="checkbox" checked={postUploadTypes.torrent_modo}
-                    on:change={(e) => {
-                      const v = e.currentTarget.checked
-                      postUploadTypes = { ...postUploadTypes, torrent_modo: v, torrent_admin: v?false:postUploadTypes.torrent_admin, torrent_prive: v?false:postUploadTypes.torrent_prive }
-                    }} />
-                  👥 Torrent MODO
-                </label>
-                <label class="check-label" title="Workflow perso : TON FTP + TA seedbox (saisis dans Réglages)">
-                  <input type="checkbox" checked={postUploadTypes.torrent_prive}
-                    on:change={(e) => {
-                      const v = e.currentTarget.checked
-                      postUploadTypes = { ...postUploadTypes, torrent_prive: v, torrent_admin: v?false:postUploadTypes.torrent_admin, torrent_modo: v?false:postUploadTypes.torrent_modo }
-                    }} />
-                  🏠 Torrent Privé
-                </label>
-                <label class="check-label"><input type="checkbox" bind:checked={postUploadTypes.nzb} /> NZB</label>
-                <label class="check-label"><input type="checkbox" bind:checked={postUploadTypes.ddl} /> DDL</label>
-                <button class="btn-full-auto" class:active={postUploadTypes.torrent_admin && postUploadTypes.nzb && postUploadTypes.ddl}
+              <div class="upload-pills">
+                <button type="button"
+                  class="upload-pill"
+                  class:active={postUploadTypes.torrent_admin}
+                  data-color="gold"
+                  title="Workflow team-shared : FTP ADMIN + seedbox ruTorrent de la team"
                   on:click={() => {
-                    const on = !(postUploadTypes.torrent_admin && postUploadTypes.nzb && postUploadTypes.ddl)
-                    postUploadTypes = { torrent_admin: on, torrent_modo: false, torrent_prive: false, nzb: on, ddl: on }
+                    const v = !postUploadTypes.torrent_admin
+                    postUploadTypes = { ...postUploadTypes, torrent_admin: v, torrent_modo: v?false:postUploadTypes.torrent_modo, torrent_prive: v?false:postUploadTypes.torrent_prive }
                   }}>
-                  ⚡ Full Auto (ADMIN)
+                  <span class="pill-icon">👑</span><span class="pill-label">Torrent ADMIN</span>
+                </button>
+                <button type="button"
+                  class="upload-pill"
+                  class:active={postUploadTypes.torrent_modo}
+                  data-color="silver"
+                  title="Workflow team modo : FTP MOD + qBit shared"
+                  on:click={() => {
+                    const v = !postUploadTypes.torrent_modo
+                    postUploadTypes = { ...postUploadTypes, torrent_modo: v, torrent_admin: v?false:postUploadTypes.torrent_admin, torrent_prive: v?false:postUploadTypes.torrent_prive }
+                  }}>
+                  <span class="pill-icon">👥</span><span class="pill-label">Torrent MODO</span>
+                </button>
+                <button type="button"
+                  class="upload-pill"
+                  class:active={postUploadTypes.torrent_prive}
+                  data-color="blue"
+                  title="Workflow perso : TON FTP + TA seedbox (saisis dans Réglages)"
+                  on:click={() => {
+                    const v = !postUploadTypes.torrent_prive
+                    postUploadTypes = { ...postUploadTypes, torrent_prive: v, torrent_admin: v?false:postUploadTypes.torrent_admin, torrent_modo: v?false:postUploadTypes.torrent_modo }
+                  }}>
+                  <span class="pill-icon">🏠</span><span class="pill-label">Torrent Privé</span>
+                </button>
+                <button type="button"
+                  class="upload-pill"
+                  class:active={postUploadTypes.nzb}
+                  data-color="purple"
+                  on:click={() => postUploadTypes = { ...postUploadTypes, nzb: !postUploadTypes.nzb }}>
+                  <span class="pill-icon">📰</span><span class="pill-label">NZB</span>
+                </button>
+                <button type="button"
+                  class="upload-pill"
+                  class:active={postUploadTypes.ddl}
+                  data-color="green"
+                  on:click={() => postUploadTypes = { ...postUploadTypes, ddl: !postUploadTypes.ddl }}>
+                  <span class="pill-icon">💾</span><span class="pill-label">DDL</span>
                 </button>
               </div>
               <div style="margin-top:8px;font-size:11px;color:var(--text3);line-height:1.4">
@@ -1512,9 +1526,15 @@
             {#if postUploadTypes.ddl}
               <div class="post-field">
                 <div class="post-field-label">Hosts DDL</div>
-                <div class="upload-types">
-                  <label class="check-label"><input type="checkbox" bind:checked={postDdlHosts.onefichier} /> 1Fichier</label>
-                  <label class="check-label"><input type="checkbox" bind:checked={postDdlHosts.sendcm} /> Send.now</label>
+                <div class="upload-pills">
+                  <button type="button" class="upload-pill" class:active={postDdlHosts.onefichier} data-color="green"
+                    on:click={() => postDdlHosts = { ...postDdlHosts, onefichier: !postDdlHosts.onefichier }}>
+                    <span class="pill-icon">📦</span><span class="pill-label">1Fichier</span>
+                  </button>
+                  <button type="button" class="upload-pill" class:active={postDdlHosts.sendcm} data-color="green"
+                    on:click={() => postDdlHosts = { ...postDdlHosts, sendcm: !postDdlHosts.sendcm }}>
+                    <span class="pill-icon">📦</span><span class="pill-label">Send.now</span>
+                  </button>
                 </div>
               </div>
             {:else}<div></div>{/if}
@@ -2157,60 +2177,81 @@
     border-color: rgba(0, 180, 216, 0.35);
   }
 
-  .upload-types { display: flex; gap: 18px; align-items: center; }
-  .btn-full-auto {
-    background: rgba(255, 214, 10, 0.08);
-    border: 1px solid rgba(255, 214, 10, 0.3);
-    color: var(--yellow);
-    padding: 6px 14px; font-size: 11px; font-weight: 700;
-    border-radius: 8px;
-    text-transform: uppercase; letter-spacing: 0.6px;
-    transition: all 160ms ease;
+  /* Pills modernes "Uploader via" */
+  .upload-pills {
+    display: flex;
+    gap: 8px;
+    flex-wrap: nowrap;
+    align-items: stretch;
+    overflow-x: auto;
+    padding: 2px 0;
+    scrollbar-width: thin;
   }
-  .btn-full-auto:hover { background: rgba(255, 214, 10, 0.15); }
-  .btn-full-auto.active {
-    background: var(--grad-primary); color: #fff;
-    border-color: rgba(0,0,0,0.25);
-    box-shadow: inset 0 1px 0 rgba(255,255,255,0.25), 0 6px 18px -6px var(--accent-glow);
-  }
-  .check-label {
-    display: inline-flex; align-items: center; gap: 8px;
-    font-size: 13px; color: var(--text); cursor: pointer;
-    line-height: 1; user-select: none;
-    padding: 4px 2px;
-  }
-  .check-label input[type="checkbox"] {
-    appearance: none;
-    -webkit-appearance: none;
-    width: 18px; height: 18px;
-    margin: 0; padding: 0;
-    background: rgba(255,255,255,0.04);
-    border: 1.5px solid var(--border-strong, rgba(255,255,255,0.2));
-    border-radius: 5px;
-    cursor: pointer;
-    position: relative;
+  .upload-pills::-webkit-scrollbar { height: 4px; }
+  .upload-pills::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 4px; }
+
+  .upload-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
     flex-shrink: 0;
-    transition: all 0.15s ease;
-    vertical-align: middle;
+    height: 36px;
+    padding: 0 16px;
+    background: rgba(255,255,255,0.03);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 999px;
+    color: var(--text2, rgba(255,255,255,0.7));
+    font-size: 12.5px;
+    font-weight: 600;
+    letter-spacing: 0.2px;
+    cursor: pointer;
+    user-select: none;
+    transition: all 0.18s cubic-bezier(0.4, 0, 0.2, 1);
+    white-space: nowrap;
+    position: relative;
   }
-  .check-label input[type="checkbox"]:hover {
-    border-color: var(--accent, #7ef0c0);
-    background: rgba(126,240,192,0.06);
+  .upload-pill:hover {
+    background: rgba(255,255,255,0.06);
+    border-color: rgba(255,255,255,0.16);
+    color: var(--text, #fff);
+    transform: translateY(-1px);
   }
-  .check-label input[type="checkbox"]:checked {
-    background: var(--accent, #7ef0c0);
-    border-color: var(--accent, #7ef0c0);
+  .upload-pill .pill-icon {
+    font-size: 15px;
+    line-height: 1;
+    transition: transform 0.18s ease;
   }
-  .check-label input[type="checkbox"]:checked::after {
-    content: '';
-    position: absolute;
-    top: 2px; left: 5px;
-    width: 4px; height: 8px;
-    border: solid #0d0a10;
-    border-width: 0 2px 2px 0;
-    transform: rotate(45deg);
+  .upload-pill:hover .pill-icon { transform: scale(1.1); }
+  .upload-pill .pill-label { line-height: 1; }
+
+  /* État actif — couleur dynamique selon data-color */
+  .upload-pill.active {
+    color: #0d0a10;
+    font-weight: 700;
+    border-color: transparent;
   }
-  .check-label input { width: auto; accent-color: var(--red-hot); }
+  .upload-pill[data-color="gold"].active {
+    background: linear-gradient(135deg, #fbbf24, #f59e0b);
+    box-shadow: 0 4px 16px -4px rgba(251,191,36,0.5), inset 0 1px 0 rgba(255,255,255,0.3);
+  }
+  .upload-pill[data-color="silver"].active {
+    background: linear-gradient(135deg, #cbd5e1, #94a3b8);
+    box-shadow: 0 4px 16px -4px rgba(203,213,225,0.5), inset 0 1px 0 rgba(255,255,255,0.3);
+  }
+  .upload-pill[data-color="blue"].active {
+    background: linear-gradient(135deg, #60a5fa, #3b82f6);
+    color: #fff;
+    box-shadow: 0 4px 16px -4px rgba(96,165,250,0.5), inset 0 1px 0 rgba(255,255,255,0.25);
+  }
+  .upload-pill[data-color="purple"].active {
+    background: linear-gradient(135deg, #a78bfa, #8b5cf6);
+    color: #fff;
+    box-shadow: 0 4px 16px -4px rgba(167,139,250,0.5), inset 0 1px 0 rgba(255,255,255,0.25);
+  }
+  .upload-pill[data-color="green"].active {
+    background: linear-gradient(135deg, #7ef0c0, #34d399);
+    box-shadow: 0 4px 16px -4px rgba(126,240,192,0.5), inset 0 1px 0 rgba(255,255,255,0.3);
+  }
 
   .post-result {
     margin-top: 10px; padding: 10px 13px;

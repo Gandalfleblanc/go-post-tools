@@ -7,7 +7,6 @@
   import logo from './assets/logo.png'
   import loginLogo from './assets/login-logo.png'
   import { ListCheckTorrents, ReseedFromLihdl, ReseedPrepare, ReseedExecute, SelectAnyTorrentFile, SelectMkvFile, GetVersion, StartWatchFolder, StopWatchFolder, IsWatching, CheckForUpdate, OpenBrowser, HistoryList, HistoryDelete, HistoryStats, DownloadUpdate, HasLihdlSettingsPassword, SetLihdlSettingsPassword, VerifyLihdlSettingsPassword, ClearLihdlSettingsPassword, IsLihdlPasswordManaged, IsHydrackerURLManaged, GetEffectiveHydrackerURL, FindHydrackerSources, FicheGetContent, FicheGetNfo, GetDDLFilename, GetUploaderStats, LoginUser, Logout, GetCurrentUser, TryAutoLogin, HashPassword, GetTeamConfig, BuildTeamJSON, FetchHydrackerAvatar, ChangeMyPassword, GetNzbFilenames, DeleteSeedboxByHash, MediaSearch, HydrackerSearch, TMDBGetByImdbID, TMDBGetProviders, HydrackerGetByID, HydrackerGetByTmdbID, DownloadToDownloads, AutoReseedFromHydracker, AutoReseedDDLFromHydracker, AutoReseedFullFromTorrent, ListReseedRequests, ListMyLiens, ListMyTorrents, DeleteMyLien, DeleteMyTorrent, DeleteMyNzb, DeleteTorrentAndFTP, ListSeedboxHashes, GetNexumIndex, TestNexum, UpdateMyLien, UpdateMyTorrent, GetMetaQualities, ListTitlesSorted, GetUserProfile, ParseFilename, Notify } from '../wailsjs/go/main/App.js'
-  import nexumLogo from './assets/nexum-logo.png'
 
   // --- Tabs (réorganisés par workflow, 8 onglets principaux) ---
   const TABS = [
@@ -17,7 +16,6 @@
     { id: 'reseed',    label: '♻️ Reseed' },        // fusion : Demandes + Depuis URL
     { id: 'myuploads', label: '📤 Mes uploads' },
     { id: 'history',   label: '📚 Historique' },
-    { id: 'nexum',     label: '🟪 Nexum' },
     { id: 'logs',      label: '🔬 Logs' },           // fusion : Journal + API
     { id: 'manager',   label: '👥 Manager' },
     { id: 'settings',  label: '⚙️ Réglages' },
@@ -26,9 +24,7 @@
   let reseedSubTab = 'requests'   // 'requests' | 'url'
   let logsSubTab = 'journal'      // 'journal' | 'api'
   // Onglets visibles UNIQUEMENT pour certains pseudos (indépendant du rôle)
-  const TABS_OWNER_ONLY = {
-    'nexum': ['Gandalf'],
-  }
+  const TABS_OWNER_ONLY = {}
   // Onglets réservés à certains rôles (override de la conf team.json)
   const TABS_ROLE_ONLY = {
     'manager': ['admin'],
@@ -2525,22 +2521,6 @@
             </div>
           </div>
         {/if}
-      </div>
-
-    <!-- ===== NEXUM (Gandalf only) ===== -->
-    {:else if activeTab === 'nexum'}
-      <div class="tab-content">
-        <h2>🟪 Nexum</h2>
-        <div class="nexum-hero">
-          <div class="nexum-logo-wrapper">
-            <img src={nexumLogo} alt="Nexum" class="nexum-logo" />
-          </div>
-          <div style="font-size:16px;font-weight:600;color:var(--text);margin-bottom:8px;letter-spacing:1px">NEXUM — Work in progress</div>
-          <div style="color:var(--text3);font-size:12.5px;max-width:480px;margin:0 auto;line-height:1.6">
-            Espace réservé pour les fonctionnalités Nexum (tracker secondaire).<br>
-            À définir : tes stats perso, classement, match avec Hydracker, upload cross-tracker, etc.
-          </div>
-        </div>
       </div>
 
     <!-- ===== LOGS : Requêtes API (sous-onglet) ===== -->
