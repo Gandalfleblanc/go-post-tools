@@ -756,15 +756,25 @@
     addLog('TMDB', `🔍 Recherche auto : "${query}"${fileInfo?.year ? ' (' + fileInfo.year + ')' : ''}`)
     try {
       // Recherche via mediasearch (plus fiable, inclut le tmdb_id directement)
+      // Le proxy exige année OU pattern SxxEyy — sinon "Year or episode not found".
       const year = fileInfo?.year || ''
-      const q = year ? `${query} ${year}` : query
+      let q = query
+      if (year) {
+        q = `${query} ${year}`
+      } else if (fileInfo?.season && fileInfo?.episode) {
+        const s = String(fileInfo.season).padStart(2, '0')
+        const e = String(fileInfo.episode).padStart(2, '0')
+        q = `${query} S${s}E${e}`
+      } else if (fileInfo?.season) {
+        q = `${query} S${String(fileInfo.season).padStart(2, '0')}E01`
+      }
       let spResults = []
       try { spResults = await MediaSearch(q) || [] } catch(e) { addLog('TMDB', '⚠ mediasearch: ' + e) }
       addLog('TMDB', `mediasearch : ${spResults.length} résultat(s)`)
 
       if (spResults.length === 0) {
         // Fallback sur TMDB direct si mediasearch ne trouve rien
-        try { tmdbResults = await TMDBSearch(query) || [] } catch(e) { addLog('TMDB', '✗ TMDB API : ' + e); tmdbResults = [] }
+        try { tmdbResults = await TMDBSearch(q) || [] } catch(e) { addLog('TMDB', '✗ TMDB API : ' + e); tmdbResults = [] }
         addLog('TMDB', `TMDB API : ${tmdbResults.length} résultat(s)`)
       } else {
         // Convertit les résultats mediasearch en objets compatibles TMDB pour la modal
