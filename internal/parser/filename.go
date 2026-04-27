@@ -36,8 +36,9 @@ var (
 	reGroup    = regexp.MustCompile(`-([A-Za-z0-9]+)$`)
 	reSeparator = regexp.MustCompile(`[._\s]+`)
 	// Épisodes : S01E02, S1E2, 1x01, Saison 01 Episode 02
-	reSeasonEpisode = regexp.MustCompile(`(?i)\b[sS](\d{1,2})[\s._-]?[eE](\d{1,3})\b`)
-	reCrossEp       = regexp.MustCompile(`\b(\d{1,2})x(\d{1,3})\b`)
+	// Episode jusqu'à 9999 (séries quotidiennes type "Demain nous appartient" qui dépassent 1000)
+	reSeasonEpisode = regexp.MustCompile(`(?i)\b[sS](\d{1,2})[\s._-]?[eE](\d{1,4})\b`)
+	reCrossEp       = regexp.MustCompile(`\b(\d{1,2})x(\d{1,4})\b`)
 	reSeasonOnly    = regexp.MustCompile(`(?i)\b[sS](?:aison)?[\s._-]?(\d{1,2})\b`)
 )
 
