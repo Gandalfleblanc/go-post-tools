@@ -110,6 +110,11 @@
       "pseudo": "Thomas57",
       "role": "modo",
       "password_hash": "$2a$12$EmzImhVsh.oKlukuOi5.t.cOghrW9EdEbZnR0aTygWkOlrVnUhTWm"
+    },
+    {
+      "pseudo": "tartempion",
+      "role": "team",
+      "password_hash": "$2a$12$gJT6p3qq6eKFpOgzuklVoeqlxDAEss/.eble6B/1Vk5Qncvjea7bi"
     }
   ]
 }
