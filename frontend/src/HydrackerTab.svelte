@@ -343,7 +343,7 @@
       const start = Date.now()
       const tick = () => {
         if (queueCancelled) return reject(new Error('queue annulée'))
-        if (selectedHydracker && postQuality && postLanguages.length && mkvFilePath) return resolve()
+        if (selectedHydracker && postQuality && postLanguages.length && mkvFilePath && subsAutoFilled) return resolve()
         // Si action user requise (ambiguïté TMDB ou fiche Hydracker manquante) : pause infinie
         const userActionNeeded = tmdbAmbiguous || hydrackerNotFound
         if (!userActionNeeded && Date.now() - start > timeoutMs) return reject(new Error('timeout chargement fiche'))
@@ -610,13 +610,11 @@
       const matched = subT.map(t => mapSubTrackByTitle(t)).filter(Boolean)
       addLog('SUB', `pistes : ${subT.map((t, i) => `"${t.title || t.language || '?'}" → ${matched[i]?.name || '?'}`).join(' · ')}`)
       postSubs = dedupeById(matched)
-      subsAutoFilled = true
     } else if (mediaInfo?.subs?.length) {
       const rawCodes = mediaInfo.subs
       const matched = rawCodes.map(matchSub)
       addLog('SUB', `codes bruts : [${rawCodes.join(', ')}] → match : [${matched.map(s => `${s.name}${s.id ? '#'+s.id : '⚠'}`).join(', ')}]`)
       postSubs = dedupeById(matched)
-      subsAutoFilled = true
     } else if (file?.name) {
       // Fallback : si MediaInfo n'a vu aucune sub (SRT externe / hardcodée),
       // on devine via filename. VOSTFR / FASTSUB / SUBFR → French.
@@ -625,11 +623,14 @@
         const french = subOptions.find(o => o.name === 'French')
         if (french) {
           postSubs = [french]
-          subsAutoFilled = true
           addLog('SUB', '⚙ filename hint VOSTFR/FASTSUB → ajout French')
         }
       }
     }
+    // Verrouille uniquement quand mediaInfo a répondu (success OU error) — pareil
+    // que langs : sinon waitForReady en queue batch peut résoudre avant que les
+    // subs aient été poséees par le bloc réactif.
+    if (mediaInfo || mediaInfoError) subsAutoFilled = true
   }
 
   // Mappe une piste audio vers une option Hydracker en se basant sur le Title de
