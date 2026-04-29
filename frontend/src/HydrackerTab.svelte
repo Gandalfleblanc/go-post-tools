@@ -293,13 +293,8 @@
     // Snapshot de la fiche TMDB déjà sélectionnée (typiquement le show TV pour
     // les 10 épisodes droppés) → réutilisée sur tous les items suivants.
     queueTMDBHint = selectedTMDB?.id || 0
-    // Snapshot des choix utilisateur sur l'épisode 1 (qualité/langues/subs).
-    // Si l'auto-detect s'est trompé et l'user a corrigé, on propage la correction
-    // sur tous les épisodes suivants au lieu de re-laisser l'auto-detect refaire
-    // la même erreur.
-    const lockedQuality = postQuality
-    const lockedLanguages = [...postLanguages]
-    const lockedSubs = [...postSubs]
+    // Pas de lock qualité/langues/subs : on laisse l'auto-detect tourner par
+    // fichier, chaque épisode peut avoir des pistes ou une qualité différente.
     while (queue.length > 0) {
       const path = queue.shift()
       queue = queue
@@ -314,10 +309,6 @@
         if (!alreadyReady) {
           loadFileFromPath(path, null)
           await waitForReady(60000)
-          // Override l'auto-detect avec les choix user de l'épisode 1
-          if (lockedQuality) postQuality = lockedQuality
-          if (lockedLanguages.length) postLanguages = [...lockedLanguages]
-          postSubs = [...lockedSubs]
         }
         await lancerPost()
         queueDone++
