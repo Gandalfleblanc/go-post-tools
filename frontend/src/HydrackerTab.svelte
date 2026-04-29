@@ -572,18 +572,27 @@
   // Auto-détection des langues audio : mediaInfo est prioritaire (plus fiable que le parser)
   // Si le parser a détecté "MULTi" / "MULTI" / "DUAL" on l'ignore (c'est un tag, pas une langue)
   $: if (langOptions.length && !langsAutoFilled) {
-    const audioTracks = (mediaInfo?.audios || []).map(a => a.lang).filter(Boolean)
-    if (audioTracks.length) {
-      postLanguages = dedupeById(mapAudioTracks(audioTracks))
+    const tracks = mediaInfo?.audios || []
+    let primaryDone = false
+    if (tracks.length) {
+      // Nouveau : mapping par Title (FR AD, FR VFi, ENG VO…) — plus précis que par position
+      const matched = tracks.map(t => mapAudioTrackByTitle(t)).filter(Boolean)
+      if (matched.length) {
+        postLanguages = dedupeById(matched)
+        addLog('LANG', `pistes audio : ${tracks.map((t, i) => `#${i+1} "${t.title || t.language || '?'}" → ${matched[i]?.name || '?'}`).join(' · ')}`)
+        primaryDone = true
+      }
     } else if (fileInfo?.languages?.length) {
       // Fallback sur le parser, sans les tags génériques ni les tags de sous-titrage
       // (VOSTFR, VO, VOST, VOA = "audio original + sous-titres", PAS une langue audio)
       const clean = fileInfo.languages.filter(l => !['multi','multil','dual','vff','vostfr','vo','vost','voa'].includes(l.toLowerCase()))
-      if (clean.length) postLanguages = dedupeById(clean.map(matchLang))
+      if (clean.length) {
+        postLanguages = dedupeById(clean.map(matchLang))
+        primaryDone = true
+      }
     }
-    // Patterns spéciaux dans le nom de fichier (priorité filename sur mediainfo)
+    // Patterns spéciaux dans le nom de fichier (s'ajoutent aux langues détectées)
     const rawName = (fileInfo?.raw || file?.name || '').toUpperCase()
-    // WITH.AD → ajouter FRENCH AD aux langues
     if (rawName.includes('WITH.AD') || rawName.includes('WITHAD')) {
       const frad = langOptions.find(o => o.name === 'FRENCH AD')
       if (frad && !postLanguages.some(l => l && l.name === 'FRENCH AD')) {
@@ -591,7 +600,6 @@
         addLog('LANG', 'WITH.AD détecté → ajout FRENCH AD')
       }
     }
-    // French.VOQ → ajouter French (Canada)
     if (rawName.includes('VOQ')) {
       const frcan = langOptions.find(o => o.name === 'French (Canada)')
       if (frcan && !postLanguages.some(l => l && l.name === 'French (Canada)')) {
@@ -599,11 +607,20 @@
         addLog('LANG', 'VOQ détecté → ajout French (Canada)')
       }
     }
-    if (postLanguages.length) langsAutoFilled = true
+    // Ne verrouille l'auto-fill que quand mediaInfo a répondu (success OU error).
+    // Sinon les hints filename verrouillent avant que les audio tracks soient analysés.
+    if (primaryDone || mediaInfoError) langsAutoFilled = true
   }
 
   $: if (langOptions.length && subOptions.length && !subsAutoFilled) {
-    if (mediaInfo?.subs?.length) {
+    // Préfère subTracks (full info) à subs (codes bruts pour rétrocompat)
+    const subT = (mediaInfo?.subTracks || []).filter(t => !t.forced)
+    if (subT.length) {
+      const matched = subT.map(t => mapSubTrackByTitle(t)).filter(Boolean)
+      addLog('SUB', `pistes : ${subT.map((t, i) => `"${t.title || t.language || '?'}" → ${matched[i]?.name || '?'}`).join(' · ')}`)
+      postSubs = dedupeById(matched)
+      subsAutoFilled = true
+    } else if (mediaInfo?.subs?.length) {
       const rawCodes = mediaInfo.subs
       const matched = rawCodes.map(matchSub)
       addLog('SUB', `codes bruts : [${rawCodes.join(', ')}] → match : [${matched.map(s => `${s.name}${s.id ? '#'+s.id : '⚠'}`).join(', ')}]`)
@@ -624,7 +641,40 @@
     }
   }
 
-  // Mappe une liste de codes ISO audio vers les noms Hydracker, en gérant les pistes multiples.
+  // Mappe une piste audio vers une option Hydracker en se basant sur le Title de
+  // la piste (plus précis que la position). Title courants vus dans les MKV :
+  // "FR VFi : AC3 5.1", "FR AD : AC3 5.1", "ENG VO : EAC3 5.1 ATMOS", etc.
+  function mapAudioTrackByTitle(track) {
+    const title = String(track?.title || '').toUpperCase()
+    const lang = String(track?.language || track?.lang || '').toLowerCase()
+    // Ordre important : AD doit être testé AVANT VF/VFI (sinon "FR AD VFi" matche VFi)
+    if (/\b(AUDIO[\s._-]?DESCRIPTION|AUDIODESCRIPTION|\bAD\b)/i.test(title)) {
+      const ad = langOptions.find(o => o.name === 'FRENCH AD')
+      if (ad) return ad
+    }
+    if (/\b(VFQ|VOQ|QUEBEC|CANADIAN|CANADA)\b/i.test(title)) {
+      const frcan = langOptions.find(o => o.name === 'French (Canada)')
+      if (frcan) return frcan
+    }
+    if (/\b(VFI|VFF|TRUEFRENCH|TRUE[\s._-]?FRENCH)\b/i.test(title)) {
+      const tf = langOptions.find(o => o.name === 'TrueFrench')
+      if (tf) return tf
+    }
+    // Fallback : Language brut (French, English, etc.)
+    if (lang) return matchLang(lang)
+    return { id: 0, name: track?.title || '?' }
+  }
+
+  // Mappe une piste sub vers une option Hydracker basé sur Title + Language.
+  // Hydracker n'a qu'une seule entrée "French" pour les subs (pas de SDH/Forced) —
+  // donc FR Full / FR SDH mappent toutes au même "French".
+  function mapSubTrackByTitle(track) {
+    const lang = String(track?.language || '').toLowerCase()
+    if (lang) return matchSub(lang)
+    return matchSub(track?.title || '')
+  }
+
+  // [Legacy] Mappe une liste de codes ISO audio vers les noms Hydracker, en gérant les pistes multiples.
   // ex: ['fr','fr','en'] → [TrueFrench, French (Canada), English]
   //
   // Règle spéciale : si le nom du fichier contient "VFi" (VF internationale,
@@ -776,11 +826,18 @@
         codec: a.Format || a.CodecID || '?',
         channels: a.Channels ? a.Channels + 'ch' : null,
         lang: a.Language || extractLangFromTitle(a.Title) || null,
+        title: a.Title || null,
+        language: a.Language || null,
       })),
       langs: [...new Set(audios.map(a => a.Language || extractLangFromTitle(a.Title)).filter(Boolean))],
-      // On filtre les sous-titres forcés : quand le MKV n'a QUE des subs forcés
-      // (typiquement traduction de dialogues étrangers), on ne les remonte pas
-      // sur Darkiworld — l'utilisateur ne les veut pas dans la fiche.
+      // Toutes les pistes texte avec leurs métadonnées (Title + Language + Forced).
+      // Les forced sont conservées dans subTracks pour l'affichage mais filtrées
+      // de `subs` (utilisé pour l'auto-fill — on ne veut pas les forced sur la fiche).
+      subTracks: texts.map(t => ({
+        title: t.Title || null,
+        language: t.Language || null,
+        forced: String(t.Forced || '').toLowerCase() === 'yes',
+      })),
       subs: texts
         .filter(t => String(t.Forced || '').toLowerCase() !== 'yes')
         .map(t => t.Language || extractLangFromTitle(t.Title) || t.Title)
@@ -1329,6 +1386,31 @@
                 <div class="mi-row"><span>Sous-titres</span><span>{mediaInfo.subs.join(', ')}</span></div>
               {/if}
             </div>
+
+            <!-- Pistes détectées : confirmation visuelle Title → mapping Hydracker -->
+            {#if (mediaInfo.audios?.length || mediaInfo.subTracks?.length)}
+              <div class="mi-block tracks-block">
+                <div class="tracks-header">🎯 Pistes détectées (mapping auto Hydracker)</div>
+                {#each (mediaInfo.audios || []) as a, i}
+                  {@const m = mapAudioTrackByTitle(a)}
+                  <div class="track-row">
+                    <span class="track-badge track-badge-audio">AUDIO #{i+1}</span>
+                    <span class="track-title">{a.title || a.language || '(sans titre)'}</span>
+                    <span class="track-arrow">→</span>
+                    <span class="track-mapped" class:track-mapped-warn={!m?.id}>{m?.name || '?'}{m?.id ? '' : ' ⚠'}</span>
+                  </div>
+                {/each}
+                {#each (mediaInfo.subTracks || []) as t, i}
+                  {@const m = t.forced ? null : mapSubTrackByTitle(t)}
+                  <div class="track-row" class:track-row-muted={t.forced}>
+                    <span class="track-badge track-badge-sub">SUB #{i+1}</span>
+                    <span class="track-title">{t.title || t.language || '(sans titre)'}{t.forced ? ' (forced)' : ''}</span>
+                    <span class="track-arrow">→</span>
+                    <span class="track-mapped" class:track-mapped-warn={!t.forced && !m?.id}>{t.forced ? '— (filtré)' : (m?.name || '?')}{!t.forced && !m?.id ? ' ⚠' : ''}</span>
+                  </div>
+                {/each}
+              </div>
+            {/if}
           {/if}
         </div>
       {/if}
@@ -2019,6 +2101,29 @@
   }
   .mi-row:last-child { border-bottom: none; }
   .mi-row span:last-child { color: var(--text); text-align: right; max-width: 120px; }
+
+  .tracks-block { margin-top: 8px; padding-top: 10px; border-top: 1px solid var(--border); }
+  .tracks-header { font-size: 11px; color: var(--text3); margin-bottom: 8px; font-weight: 600; }
+  .track-row {
+    display: grid;
+    grid-template-columns: 70px 1fr auto auto;
+    gap: 8px;
+    align-items: center;
+    padding: 4px 0;
+    font-size: 12px;
+    border-bottom: 1px dashed rgba(255,255,255,0.04);
+  }
+  .track-row:last-child { border-bottom: none; }
+  .track-row-muted { opacity: 0.5; }
+  .track-badge {
+    font-size: 10px; font-weight: 700; padding: 2px 6px; border-radius: 4px; text-align: center;
+  }
+  .track-badge-audio { background: rgba(96, 165, 250, 0.15); color: #93c5fd; }
+  .track-badge-sub { background: rgba(168, 85, 247, 0.15); color: #c4b5fd; }
+  .track-title { color: var(--text); font-family: ui-monospace, monospace; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .track-arrow { color: var(--text3); }
+  .track-mapped { color: #7ef0c0; font-weight: 600; }
+  .track-mapped-warn { color: #fbbf24; }
 
   /* Right col */
   .col-right { display: flex; flex-direction: column; gap: 14px; }
