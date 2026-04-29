@@ -50,7 +50,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-const Version = "5.2.6"
+const Version = "5.2.7"
 
 type App struct {
 	ctx         context.Context
