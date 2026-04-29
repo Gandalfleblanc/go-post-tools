@@ -156,7 +156,13 @@
       if (valid.length === 1 && queue.length === 0 && !queueProcessing && !file) {
         loadFileFromPath(valid[0], null)
       } else {
-        valid.forEach(p => enqueue(p))
+        // Batch : insert tous d'abord (sans preview), puis UN seul loadFileFromPath
+        // sur queue[0] (l'épisode le plus petit après tri numérique). Évite la
+        // race condition de loadFileFromPath multiples concurrents.
+        valid.forEach(p => enqueueOnly(p))
+        if (queue.length >= 1 && mkvFilePath !== queue[0] && !queueProcessing) {
+          loadFileFromPath(queue[0], null)
+        }
       }
     }, true)
     window.addEventListener('watch:newfile', onWatchNewFile)
@@ -245,15 +251,18 @@
   let queueDone = 0
   let queueResults = []         // [{ok, filename, message}] cumulés sur la queue
 
-  function enqueue(path) {
-    // Insère en triant par nom de fichier (ordre naturel : S01E01, S01E02, S01E03…)
+  // Insert + sort sans toucher la preview (utilisé en batch via forEach)
+  function enqueueOnly(path) {
     queue = [...queue, path].sort((a, b) =>
       a.split('/').pop().localeCompare(b.split('/').pop(), undefined, { numeric: true })
     )
     queueTotal = queueDone + queue.length + (queueProcessing ? 1 : 0)
     addLog('QUEUE', `+ ${path.split('/').pop()} (${queue.length} en attente) — clique sur ▶ Lancer pour démarrer`)
+  }
+  function enqueue(path) {
+    enqueueOnly(path)
     // Preview : si rien n'est chargé, on affiche le 1er fichier de la queue triée
-    if (!file && queue.length >= 1) {
+    if (!file && queue.length >= 1 && !queueProcessing) {
       loadFileFromPath(queue[0], null)
     }
   }
@@ -269,7 +278,15 @@
   let queueTMDBHint = 0  // id TMDB à réutiliser pour les items suivants d'une même queue
 
   async function processQueue() {
-    if (queueProcessing || queue.length === 0) return
+    if (queueProcessing) return
+    // Inclut le fichier de preview dans la queue pour qu'il soit processé
+    // (cas où l'user drop E1 seul d'abord, puis E2/E3 ensuite — sinon E1 skip)
+    if (mkvFilePath && !queue.includes(mkvFilePath)) {
+      queue = [...queue, mkvFilePath].sort((a, b) =>
+        a.split('/').pop().localeCompare(b.split('/').pop(), undefined, { numeric: true })
+      )
+    }
+    if (queue.length === 0) return
     queueCancelled = false  // nouvelle exécution de queue — on lève le flag
     queueProcessing = true
     queueResults = []
