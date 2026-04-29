@@ -15,7 +15,8 @@
         "apilog",
         "manager",
         "settings",
-        "log"
+        "log",
+        "logs"
       ]
     },
     "co-admin": {
