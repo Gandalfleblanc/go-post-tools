@@ -559,8 +559,9 @@
     if (audioTracks.length) {
       postLanguages = dedupeById(mapAudioTracks(audioTracks))
     } else if (fileInfo?.languages?.length) {
-      // Fallback sur le parser, sans les tags génériques
-      const clean = fileInfo.languages.filter(l => !['multi','multil','dual','vff'].includes(l.toLowerCase()))
+      // Fallback sur le parser, sans les tags génériques ni les tags de sous-titrage
+      // (VOSTFR, VO, VOST, VOA = "audio original + sous-titres", PAS une langue audio)
+      const clean = fileInfo.languages.filter(l => !['multi','multil','dual','vff','vostfr','vo','vost','voa'].includes(l.toLowerCase()))
       if (clean.length) postLanguages = dedupeById(clean.map(matchLang))
     }
     // Patterns spéciaux dans le nom de fichier (priorité filename sur mediainfo)
@@ -584,12 +585,26 @@
     if (postLanguages.length) langsAutoFilled = true
   }
 
-  $: if (langOptions.length && subOptions.length && !subsAutoFilled && mediaInfo?.subs?.length) {
-    const rawCodes = mediaInfo.subs
-    const matched = rawCodes.map(matchSub)
-    addLog('SUB', `codes bruts : [${rawCodes.join(', ')}] → match : [${matched.map(s => `${s.name}${s.id ? '#'+s.id : '⚠'}`).join(', ')}]`)
-    postSubs = dedupeById(matched)
-    subsAutoFilled = true
+  $: if (langOptions.length && subOptions.length && !subsAutoFilled) {
+    if (mediaInfo?.subs?.length) {
+      const rawCodes = mediaInfo.subs
+      const matched = rawCodes.map(matchSub)
+      addLog('SUB', `codes bruts : [${rawCodes.join(', ')}] → match : [${matched.map(s => `${s.name}${s.id ? '#'+s.id : '⚠'}`).join(', ')}]`)
+      postSubs = dedupeById(matched)
+      subsAutoFilled = true
+    } else if (file?.name) {
+      // Fallback : si MediaInfo n'a vu aucune sub (SRT externe / hardcodée),
+      // on devine via filename. VOSTFR / FASTSUB / SUBFR → French.
+      const rawName = (fileInfo?.raw || file.name).toUpperCase()
+      if (/\b(VOSTFR|FASTSUB|SUBFR|SUB[\s._-]?FR)\b/.test(rawName)) {
+        const french = subOptions.find(o => o.name === 'French')
+        if (french) {
+          postSubs = [french]
+          subsAutoFilled = true
+          addLog('SUB', '⚙ filename hint VOSTFR/FASTSUB → ajout French')
+        }
+      }
+    }
   }
 
   // Mappe une liste de codes ISO audio vers les noms Hydracker, en gérant les pistes multiples.
@@ -710,12 +725,27 @@
     mediaInfoLoading = false
   }
 
+  // Extrait un code langue depuis le Title d'une piste MediaInfo (ex: "ENG VO" → "eng").
+  // Ignore les tags VO/VOSTFR qui sont des indicateurs de sous-titrage, pas des langues.
+  function extractLangFromTitle(title) {
+    if (!title) return null
+    const t = String(title).toUpperCase()
+    const m = t.match(/\b(ENGLISH|ENG|FRENCH|TRUEFRENCH|FRA|FRE|GERMAN|DEU|GER|SPANISH|SPA|ITALIAN|ITA|JAPANESE|JPN|JAP|RUSSIAN|RUS|CHINESE|CHI|KOREAN|KOR|PORTUGUESE|POR|DUTCH|NLD|DUT|POLISH|POL|ARABIC|ARA|TURKISH|TUR)\b/)
+    return m ? m[1].toLowerCase() : null
+  }
+
   function parseMediaInfo(result) {
     const tracks = result?.media?.track || []
+    const typesFound = tracks.map(t => t['@type'] || '?').join(', ')
+    addLog('MI', `pistes : [${typesFound}]`)
     const general = tracks.find(t => t['@type'] === 'General') || {}
     const video = tracks.find(t => t['@type'] === 'Video') || {}
     const audios = tracks.filter(t => t['@type'] === 'Audio')
-    const texts = tracks.filter(t => t['@type'] === 'Text')
+    // Plus permissif : Text ou Subtitle (selon les variantes mediainfo.js)
+    const texts = tracks.filter(t => {
+      const ty = String(t['@type'] || '').toLowerCase()
+      return ty === 'text' || ty === 'subtitle'
+    })
 
     return {
       duration: general.Duration ? formatDuration(parseFloat(general.Duration)) : null,
@@ -728,15 +758,15 @@
       audios: audios.map(a => ({
         codec: a.Format || a.CodecID || '?',
         channels: a.Channels ? a.Channels + 'ch' : null,
-        lang: a.Language || null,
+        lang: a.Language || extractLangFromTitle(a.Title) || null,
       })),
-      langs: [...new Set(audios.map(a => a.Language).filter(Boolean))],
+      langs: [...new Set(audios.map(a => a.Language || extractLangFromTitle(a.Title)).filter(Boolean))],
       // On filtre les sous-titres forcés : quand le MKV n'a QUE des subs forcés
       // (typiquement traduction de dialogues étrangers), on ne les remonte pas
       // sur Darkiworld — l'utilisateur ne les veut pas dans la fiche.
       subs: texts
         .filter(t => String(t.Forced || '').toLowerCase() !== 'yes')
-        .map(t => t.Language || t.Title)
+        .map(t => t.Language || extractLangFromTitle(t.Title) || t.Title)
         .filter(Boolean),
     }
   }
