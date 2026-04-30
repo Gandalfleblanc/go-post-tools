@@ -102,6 +102,10 @@ export function FicheGetNfo(arg1, arg2) {
   return window['go']['main']['App']['FicheGetNfo'](arg1, arg2);
 }
 
+export function FindFirstMkvInFolder(arg1) {
+  return window['go']['main']['App']['FindFirstMkvInFolder'](arg1);
+}
+
 export function FindHydrackerSources(arg1, arg2, arg3) {
   return window['go']['main']['App']['FindHydrackerSources'](arg1, arg2, arg3);
 }
@@ -274,32 +278,36 @@ export function ParseFilename(arg1) {
   return window['go']['main']['App']['ParseFilename'](arg1);
 }
 
-export function PostDDLWorkflow(arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10) {
-  return window['go']['main']['App']['PostDDLWorkflow'](arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10);
+export function PostDDLWorkflow(arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10, arg11) {
+  return window['go']['main']['App']['PostDDLWorkflow'](arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10, arg11);
 }
 
-export function PostExistingTorrent(arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8) {
-  return window['go']['main']['App']['PostExistingTorrent'](arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8);
+export function PostExistingTorrent(arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9) {
+  return window['go']['main']['App']['PostExistingTorrent'](arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9);
 }
 
-export function PostLien(arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8) {
-  return window['go']['main']['App']['PostLien'](arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8);
+export function PostLien(arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9) {
+  return window['go']['main']['App']['PostLien'](arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9);
 }
 
-export function PostNzb(arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8) {
-  return window['go']['main']['App']['PostNzb'](arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8);
+export function PostNzb(arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9) {
+  return window['go']['main']['App']['PostNzb'](arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9);
 }
 
-export function PostNzbWorkflow(arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8) {
-  return window['go']['main']['App']['PostNzbWorkflow'](arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8);
+export function PostNzbWorkflow(arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9) {
+  return window['go']['main']['App']['PostNzbWorkflow'](arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9);
 }
 
-export function PostTorrent(arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8) {
-  return window['go']['main']['App']['PostTorrent'](arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8);
+export function PostTorrent(arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9) {
+  return window['go']['main']['App']['PostTorrent'](arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9);
 }
 
-export function PostTorrentWorkflow(arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9) {
-  return window['go']['main']['App']['PostTorrentWorkflow'](arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9);
+export function PostTorrentWorkflow(arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10) {
+  return window['go']['main']['App']['PostTorrentWorkflow'](arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10);
+}
+
+export function PrepareSeasonFolder(arg1) {
+  return window['go']['main']['App']['PrepareSeasonFolder'](arg1);
 }
 
 export function ReadFileChunk(arg1, arg2, arg3) {
@@ -324,6 +332,14 @@ export function SaveConfig(arg1) {
 
 export function SelectAnyTorrentFile() {
   return window['go']['main']['App']['SelectAnyTorrentFile']();
+}
+
+export function SelectArchiveFile() {
+  return window['go']['main']['App']['SelectArchiveFile']();
+}
+
+export function SelectFolder() {
+  return window['go']['main']['App']['SelectFolder']();
 }
 
 export function SelectMkvFile() {

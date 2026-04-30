@@ -19,6 +19,7 @@ import (
 
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"sync"
@@ -51,7 +52,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-const Version = "5.3.0"
+const Version = "5.4.0"
 
 type App struct {
 	ctx         context.Context
@@ -1020,6 +1021,95 @@ func (a *App) SelectMkvFiles() ([]string, error) {
 	return paths, err
 }
 
+// SelectFolder ouvre un dialog de sélection de dossier (pour les saisons complètes).
+func (a *App) SelectFolder() (string, error) {
+	path, err := wailsruntime.OpenDirectoryDialog(a.ctx, wailsruntime.OpenDialogOptions{
+		Title: "Sélectionner un dossier (saison complète)",
+	})
+	return path, err
+}
+
+// FindFirstMkvInFolder retourne le chemin du 1er .mkv/.mp4 trouvé dans le dossier
+// (tri alphabétique = naturel pour S01E01, S01E02…). Utilisé en mode saison
+// complète pour analyser MediaInfo + générer le NFO sur le 1er épisode.
+func (a *App) FindFirstMkvInFolder(folder string) (string, error) {
+	var found []string
+	err := filepath.Walk(folder, func(p string, info os.FileInfo, e error) error {
+		if e != nil || info.IsDir() {
+			return nil
+		}
+		ext := strings.ToLower(filepath.Ext(p))
+		if ext == ".mkv" || ext == ".mp4" {
+			found = append(found, p)
+		}
+		return nil
+	})
+	if err != nil {
+		return "", err
+	}
+	if len(found) == 0 {
+		return "", fmt.Errorf("aucun .mkv/.mp4 dans %s", folder)
+	}
+	sort.Slice(found, func(i, j int) bool {
+		return strings.ToLower(filepath.Base(found[i])) < strings.ToLower(filepath.Base(found[j]))
+	})
+	return found[0], nil
+}
+
+// PrepareSeasonFolder regroupe plusieurs MKV en un dossier "virtuel" via hardlinks
+// (instantané, pas de copie disque). Utilisé pour le mode "Multi-MKV NZB" : l'user
+// sélectionne plusieurs MKV, on les link dans un dossier nommé d'après le 1er MKV
+// (S01E01 → S01 pour que le folder ressemble à un pack saison), puis le workflow
+// folder standard prend la suite (ParPar récursif + Nyuu multi-file + ParseFilename
+// + auto-detect TMDB sur le nom du dossier).
+//
+// Le dossier reste sur disque après le post — l'user peut le supprimer manuellement
+// (les hardlinks ne dupliquent pas l'espace, donc le coût est nul).
+func (a *App) PrepareSeasonFolder(paths []string) (string, error) {
+	if len(paths) == 0 {
+		return "", fmt.Errorf("aucun fichier sélectionné")
+	}
+	// Nom du dossier dérivé du 1er fichier : strip de l'extension + S01E01 → S01
+	// pour que le nom ressemble à un pack saison reconnaissable par ParseFilename.
+	firstBase := filepath.Base(paths[0])
+	if ext := filepath.Ext(firstBase); ext != "" {
+		firstBase = firstBase[:len(firstBase)-len(ext)]
+	}
+	// Remplace S01E\d+ par S01 (insensible à la casse)
+	reEpis := regexp.MustCompile(`(?i)\b[sS](\d{1,2})[eE]\d{1,4}\b`)
+	folderName := reEpis.ReplaceAllString(firstBase, "S$1")
+	if folderName == "" {
+		folderName = "season"
+	}
+	tempBase := filepath.Dir(paths[0])
+	tempPath := filepath.Join(tempBase, folderName)
+	if err := os.MkdirAll(tempPath, 0755); err != nil {
+		return "", fmt.Errorf("mkdir %s: %w", tempPath, err)
+	}
+	for _, p := range paths {
+		target := filepath.Join(tempPath, filepath.Base(p))
+		_ = os.Remove(target) // overwrite si déjà existant
+		if err := os.Link(p, target); err != nil {
+			// Fallback symlink (cas où source/target sur volumes différents)
+			if err := os.Symlink(p, target); err != nil {
+				return "", fmt.Errorf("link %s → %s: %w", p, target, err)
+			}
+		}
+	}
+	return tempPath, nil
+}
+
+// SelectArchiveFile ouvre un dialog pour sélectionner un .rar/.zip (DDL saison complète).
+func (a *App) SelectArchiveFile() (string, error) {
+	path, err := wailsruntime.OpenFileDialog(a.ctx, wailsruntime.OpenDialogOptions{
+		Title: "Sélectionner un fichier archive (.rar / .zip / .7z)",
+		Filters: []wailsruntime.FileFilter{
+			{DisplayName: "Archives", Pattern: "*.rar;*.zip;*.7z"},
+		},
+	})
+	return path, err
+}
+
 func (a *App) SelectTorrentFile() (string, error) {
 	path, err := wailsruntime.OpenFileDialog(a.ctx, wailsruntime.OpenDialogOptions{
 		Title: "Sélectionner un fichier .torrent",
@@ -1042,16 +1132,16 @@ func (a *App) SelectNzbFile() (string, error) {
 
 // --- Upload Hydracker ---
 
-func (a *App) PostTorrent(titleID, qualite int, langues, subs []string, torrentPath, nfo string, saison, episode int) (*api.UploadTorrentResult, error) {
-	return a.client.UploadTorrent(titleID, qualite, langues, subs, torrentPath, nfo, saison, episode)
+func (a *App) PostTorrent(titleID, qualite int, langues, subs []string, torrentPath, nfo string, saison, episode int, fullSaison bool) (*api.UploadTorrentResult, error) {
+	return a.client.UploadTorrent(titleID, qualite, langues, subs, torrentPath, nfo, saison, episode, fullSaison)
 }
 
-func (a *App) PostNzb(titleID, qualite int, langues, subs []string, nzbPath, nfo string, saison, episode int) (*api.UploadNzbResult, error) {
-	return a.client.UploadNzb(titleID, qualite, langues, subs, nzbPath, nfo, saison, episode)
+func (a *App) PostNzb(titleID, qualite int, langues, subs []string, nzbPath, nfo string, saison, episode int, fullSaison bool) (*api.UploadNzbResult, error) {
+	return a.client.UploadNzb(titleID, qualite, langues, subs, nzbPath, nfo, saison, episode, fullSaison)
 }
 
-func (a *App) PostLien(titleID, qualite int, langues, subs []string, lien, nfo string, saison, episode int) (*api.UploadLienResult, error) {
-	return a.client.UploadLien(titleID, qualite, langues, subs, lien, nfo, saison, episode)
+func (a *App) PostLien(titleID, qualite int, langues, subs []string, lien, nfo string, saison, episode int, fullSaison bool) (*api.UploadLienResult, error) {
+	return a.client.UploadLien(titleID, qualite, langues, subs, lien, nfo, saison, episode, fullSaison)
 }
 
 // --- Reseed (MKV + .torrent → FTP + ruTorrent + re-check) ---
@@ -3260,13 +3350,13 @@ func (a *App) downloadFile(url string) ([]byte, error) {
 
 // PostExistingTorrent poste un .torrent déjà existant à Hydracker (sans FTP ni seedbox).
 // Utilisé quand l'utilisateur n'a pas de seedbox ou garde son MKV sur un NAS/local.
-func (a *App) PostExistingTorrent(titleID, qualite int, langues, subs []string, torrentPath, nfo string, saison, episode int) (*TorrentWorkflowResult, error) {
+func (a *App) PostExistingTorrent(titleID, qualite int, langues, subs []string, torrentPath, nfo string, saison, episode int, fullSaison bool) (*TorrentWorkflowResult, error) {
 	a.resetCancellation()
 	if strings.TrimSpace(torrentPath) == "" {
 		return nil, fmt.Errorf("chemin .torrent manquant")
 	}
 	wailsruntime.EventsEmit(a.ctx, "torrent:status", map[string]interface{}{"stage": "post", "msg": "Post du .torrent sur Hydracker…"})
-	uploaded, err := a.client.UploadTorrent(titleID, qualite, langues, subs, torrentPath, nfo, saison, episode)
+	uploaded, err := a.client.UploadTorrent(titleID, qualite, langues, subs, torrentPath, nfo, saison, episode, fullSaison)
 	if err != nil {
 		return nil, fmt.Errorf("hydracker: %w", err)
 	}
@@ -3291,7 +3381,7 @@ func (a *App) PostExistingTorrent(titleID, qualite int, langues, subs []string, 
 
 // PostTorrentWorkflow : post complet torrent.
 // seedboxType : "admin" (ruTorrent) | "modo" (qBit) | "" (auto : qBit si configuré sinon ruTorrent).
-func (a *App) PostTorrentWorkflow(titleID, qualite int, langues, subs []string, mkvPath, nfo string, saison, episode int, seedboxType string) (*TorrentWorkflowResult, error) {
+func (a *App) PostTorrentWorkflow(titleID, qualite int, langues, subs []string, mkvPath, nfo string, saison, episode int, seedboxType string, fullSaison bool) (*TorrentWorkflowResult, error) {
 	a.resetCancellation()
 	if strings.TrimSpace(mkvPath) == "" {
 		return nil, fmt.Errorf("chemin MKV manquant")
@@ -3334,17 +3424,28 @@ func (a *App) PostTorrentWorkflow(titleID, qualite int, langues, subs []string, 
 		wailsruntime.EventsEmit(a.ctx, "torrent:status", map[string]interface{}{"stage": stage, "msg": msg})
 	}
 
-	// 1. Upload MKV vers la seedbox cible
-	//    - MODO  → FTP MODÉRATEUR (cfg.FTPMod*) — seedbox partagée des modos
-	//    - PRIVE → FTP perso de l'user (cfg.PrivateFTP*) — saisi en Réglages
-	//    - ADMIN → NextCloud ADMIN via WebDAV (cfg.NextcloudAdmin*) — team-shared
+	// 1. Upload vers la seedbox cible (single MKV ou dossier complet selon stat).
+	// Le path peut pointer sur un fichier (.mkv unique) ou un dossier (saison
+	// complète) — on bascule automatiquement sur l'API folder selon os.Stat.
+	srcInfo, statErr := os.Stat(mkvPath)
+	if statErr != nil {
+		return nil, fmt.Errorf("stat source: %w", statErr)
+	}
+	isFolder := srcInfo.IsDir()
 	var remoteName string
 	var uploadErr error
 	if seedboxType == "admin" || seedboxType == "" {
-		emit("ftp", "Upload NextCloud ADMIN…")
-		remoteName, uploadErr = nextcloud.Upload(a.workContext(), a.cfg.NextcloudAdminURL, a.cfg.NextcloudAdminUser, a.cfg.NextcloudAdminPassword, a.cfg.NextcloudAdminPath, mkvPath, func(p nextcloud.Progress) {
-			wailsruntime.EventsEmit(a.ctx, "torrent:ftp", p)
-		})
+		if isFolder {
+			emit("ftp", "Upload NextCloud ADMIN (dossier saison)…")
+			remoteName, uploadErr = nextcloud.UploadFolder(a.workContext(), a.cfg.NextcloudAdminURL, a.cfg.NextcloudAdminUser, a.cfg.NextcloudAdminPassword, a.cfg.NextcloudAdminPath, mkvPath, func(p nextcloud.Progress) {
+				wailsruntime.EventsEmit(a.ctx, "torrent:ftp", p)
+			})
+		} else {
+			emit("ftp", "Upload NextCloud ADMIN…")
+			remoteName, uploadErr = nextcloud.Upload(a.workContext(), a.cfg.NextcloudAdminURL, a.cfg.NextcloudAdminUser, a.cfg.NextcloudAdminPassword, a.cfg.NextcloudAdminPath, mkvPath, func(p nextcloud.Progress) {
+				wailsruntime.EventsEmit(a.ctx, "torrent:ftp", p)
+			})
+		}
 		if uploadErr != nil {
 			return nil, fmt.Errorf("nextcloud: %w", uploadErr)
 		}
@@ -3365,18 +3466,31 @@ func (a *App) PostTorrentWorkflow(titleID, qualite int, langues, subs []string, 
 			ftpHost, ftpPort, ftpUser, ftpPass, ftpPath = a.cfg.PrivateFTPHost, a.cfg.PrivateFTPPort, a.cfg.PrivateFTPUser, a.cfg.PrivateFTPPassword, a.cfg.PrivateFTPPath
 			emit("ftp", "Upload FTP Privé…")
 		}
-		remoteName, uploadErr = ftpup.Upload(a.workContext(), ftpHost, ftpPort, ftpUser, ftpPass, ftpPath, mkvPath, func(p ftpup.Progress) {
-			wailsruntime.EventsEmit(a.ctx, "torrent:ftp", p)
-		})
+		if isFolder {
+			emit("ftp", fmt.Sprintf("Upload FTP %s (dossier saison)…", strings.ToUpper(seedboxType)))
+			remoteName, uploadErr = ftpup.UploadFolder(a.workContext(), ftpHost, ftpPort, ftpUser, ftpPass, ftpPath, mkvPath, func(p ftpup.Progress) {
+				wailsruntime.EventsEmit(a.ctx, "torrent:ftp", p)
+			})
+		} else {
+			remoteName, uploadErr = ftpup.Upload(a.workContext(), ftpHost, ftpPort, ftpUser, ftpPass, ftpPath, mkvPath, func(p ftpup.Progress) {
+				wailsruntime.EventsEmit(a.ctx, "torrent:ftp", p)
+			})
+		}
 		if uploadErr != nil {
 			return nil, fmt.Errorf("ftp: %w", uploadErr)
 		}
 		emit("ftp_done", fmt.Sprintf("FTP OK : %s", remoteName))
 	}
 
-	// 2. Créer le .torrent
-	ext := filepath.Ext(mkvPath)
-	releaseName := strings.TrimSuffix(filepath.Base(mkvPath), ext)
+	// 2. Créer le .torrent (.torrent placé à côté de la source — sortie du folder
+	// pour ne pas être inclus dans le hashing).
+	var releaseName string
+	if isFolder {
+		releaseName = filepath.Base(mkvPath)
+	} else {
+		ext := filepath.Ext(mkvPath)
+		releaseName = strings.TrimSuffix(filepath.Base(mkvPath), ext)
+	}
 	torrentPath := filepath.Join(filepath.Dir(mkvPath), releaseName+".torrent")
 	emit("create", "Création du .torrent…")
 	if err := torrent.Create(mkvPath, a.cfg.TrackerURL, torrentPath, pieceSize, func(p torrent.Progress) {
@@ -3406,7 +3520,7 @@ func (a *App) PostTorrentWorkflow(titleID, qualite int, langues, subs []string, 
 
 	// 3. Post sur Hydracker
 	emit("post", "Post sur Hydracker…")
-	uploaded, err := a.client.UploadTorrent(titleID, qualite, langues, subs, torrentPath, nfo, saison, episode)
+	uploaded, err := a.client.UploadTorrent(titleID, qualite, langues, subs, torrentPath, nfo, saison, episode, fullSaison)
 	if err != nil {
 		emit("error", fmt.Sprintf("Hydracker : %s", err.Error()))
 		return nil, fmt.Errorf("hydracker: %w", err)
@@ -3512,7 +3626,7 @@ type NzbWorkflowResult struct {
 	HydrackerID int    `json:"hydracker_id"`
 }
 
-func (a *App) PostNzbWorkflow(titleID, qualite int, langues, subs []string, mkvPath, nfo string, saison, episode int) (*NzbWorkflowResult, error) {
+func (a *App) PostNzbWorkflow(titleID, qualite int, langues, subs []string, mkvPath, nfo string, saison, episode int, fullSaison bool) (*NzbWorkflowResult, error) {
 	a.resetCancellation()
 	// Validation config — retourne des messages explicites
 	if a.cfg.UsenetHost == "" {
@@ -3532,11 +3646,24 @@ func (a *App) PostNzbWorkflow(titleID, qualite int, langues, subs []string, mkvP
 		return nil, fmt.Errorf("chemin du fichier MKV manquant — utilisez le bouton Parcourir")
 	}
 
-	ext := filepath.Ext(mkvPath)
-	releaseName := strings.TrimSuffix(filepath.Base(mkvPath), ext)
-	outputDir := filepath.Dir(mkvPath)
+	srcInfo, statErr := os.Stat(mkvPath)
+	if statErr != nil {
+		return nil, fmt.Errorf("stat source: %w", statErr)
+	}
+	isFolder := srcInfo.IsDir()
 
-	// 1. ParPar
+	// Calcule releaseName (folder basename ou file sans extension) et outputDir.
+	var releaseName, outputDir string
+	if isFolder {
+		releaseName = filepath.Base(strings.TrimRight(mkvPath, string(filepath.Separator)))
+		outputDir = filepath.Dir(strings.TrimRight(mkvPath, string(filepath.Separator)))
+	} else {
+		ext := filepath.Ext(mkvPath)
+		releaseName = strings.TrimSuffix(filepath.Base(mkvPath), ext)
+		outputDir = filepath.Dir(mkvPath)
+	}
+
+	// 1. ParPar (gère folder OU file via os.Stat dans parpar.Run)
 	wailsruntime.EventsEmit(a.ctx, "nzb:status", "Génération PAR2…")
 	if err := parpar.Run(a.workContext(), a.cfg, mkvPath, func(p parpar.Progress) {
 		wailsruntime.EventsEmit(a.ctx, "nzb:parpar", p)
@@ -3544,11 +3671,22 @@ func (a *App) PostNzbWorkflow(titleID, qualite int, langues, subs []string, mkvP
 		return nil, fmt.Errorf("parpar: %w", err)
 	}
 
-	// 2. Collecter les fichiers (mkv + par2)
+	// 2. Collecter les fichiers à uploader (sources + par2)
 	par2Pattern := filepath.Join(outputDir, releaseName+".*.par2")
 	par2Files, _ := filepath.Glob(par2Pattern)
 	mainPar2 := filepath.Join(outputDir, releaseName+".par2")
-	allFiles := []string{mkvPath}
+	var allFiles []string
+	if isFolder {
+		// Walk pour récupérer tous les fichiers du dossier source
+		_ = filepath.Walk(mkvPath, func(p string, info os.FileInfo, e error) error {
+			if e == nil && !info.IsDir() {
+				allFiles = append(allFiles, p)
+			}
+			return nil
+		})
+	} else {
+		allFiles = []string{mkvPath}
+	}
 	if _, err := os.Stat(mainPar2); err == nil {
 		allFiles = append(allFiles, mainPar2)
 	}
@@ -3575,7 +3713,7 @@ func (a *App) PostNzbWorkflow(titleID, qualite int, langues, subs []string, mkvP
 	}
 	// 5. Upload NZB sur Hydracker
 	wailsruntime.EventsEmit(a.ctx, "nzb:status", "Upload NZB sur Hydracker…")
-	uploaded, err := a.client.UploadNzb(titleID, qualite, langues, subs, result.NZBPath, nfo, saison, episode)
+	uploaded, err := a.client.UploadNzb(titleID, qualite, langues, subs, result.NZBPath, nfo, saison, episode, fullSaison)
 	if err != nil {
 		return nil, fmt.Errorf("upload nzb: %w", err)
 	}
@@ -3610,7 +3748,7 @@ type DDLWorkflowResult struct {
 	HydrackerID int      `json:"hydracker_id"`
 }
 
-func (a *App) PostDDLWorkflow(titleID, qualite int, langues, subs []string, mkvPath, nfo string, use1Fichier, useSendCm bool, saison, episode int) (*DDLWorkflowResult, error) {
+func (a *App) PostDDLWorkflow(titleID, qualite int, langues, subs []string, mkvPath, nfo string, use1Fichier, useSendCm bool, saison, episode int, fullSaison bool) (*DDLWorkflowResult, error) {
 	a.resetCancellation()
 	if mkvPath == "" {
 		return nil, fmt.Errorf("chemin MKV manquant")
@@ -3752,7 +3890,7 @@ func (a *App) PostDDLWorkflow(titleID, qualite int, langues, subs []string, mkvP
 		}
 		logEvent(fmt.Sprintf("%s : post du lien sur Hydracker…", host))
 		wailsruntime.EventsEmit(a.ctx, "ddl:posting", map[string]interface{}{"host": host, "posting": true})
-		uploaded, err := a.client.UploadLien(titleID, qualite, langues, subs, r.url, nfo, saison, episode)
+		uploaded, err := a.client.UploadLien(titleID, qualite, langues, subs, r.url, nfo, saison, episode, fullSaison)
 		if err != nil {
 			wailsruntime.EventsEmit(a.ctx, "ddl:posting", map[string]interface{}{"host": host, "posting": false})
 			return nil, fmt.Errorf("hydracker %s: %w", strings.ToLower(host), err)

@@ -56,7 +56,7 @@ func (r *UploadLienResult) Lien() UploadLienItem {
 	return UploadLienItem{}
 }
 
-func (c *Client) UploadTorrent(titleID, qualite int, langues, subs []string, torrentPath, nfo string, saison, episode int) (*UploadTorrentResult, error) {
+func (c *Client) UploadTorrent(titleID, qualite int, langues, subs []string, torrentPath, nfo string, saison, episode int, fullSaison bool) (*UploadTorrentResult, error) {
 	f, err := os.Open(torrentPath)
 	if err != nil {
 		return nil, fmt.Errorf("impossible d'ouvrir le fichier torrent: %w", err)
@@ -85,8 +85,11 @@ func (c *Client) UploadTorrent(titleID, qualite int, langues, subs []string, tor
 	if saison > 0 {
 		_ = w.WriteField("saison", strconv.Itoa(saison))
 	}
-	if episode > 0 {
+	if episode > 0 && !fullSaison {
 		_ = w.WriteField("episode", strconv.Itoa(episode))
+	}
+	if fullSaison {
+		_ = w.WriteField("full_saison", "1")
 	}
 	if nfo != "" {
 		_ = w.WriteField("nfo", nfo)
@@ -104,7 +107,7 @@ func (c *Client) UploadTorrent(titleID, qualite int, langues, subs []string, tor
 	return &result, nil
 }
 
-func (c *Client) UploadNzb(titleID, qualite int, langues, subs []string, nzbPath, nfo string, saison, episode int) (*UploadNzbResult, error) {
+func (c *Client) UploadNzb(titleID, qualite int, langues, subs []string, nzbPath, nfo string, saison, episode int, fullSaison bool) (*UploadNzbResult, error) {
 	f, err := os.Open(nzbPath)
 	if err != nil {
 		return nil, fmt.Errorf("impossible d'ouvrir le fichier NZB: %w", err)
@@ -133,8 +136,11 @@ func (c *Client) UploadNzb(titleID, qualite int, langues, subs []string, nzbPath
 	if saison > 0 {
 		_ = w.WriteField("saison", strconv.Itoa(saison))
 	}
-	if episode > 0 {
+	if episode > 0 && !fullSaison {
 		_ = w.WriteField("episode", strconv.Itoa(episode))
+	}
+	if fullSaison {
+		_ = w.WriteField("full_saison", "1")
 	}
 	if nfo != "" {
 		_ = w.WriteField("nfo", nfo)
@@ -152,10 +158,11 @@ func (c *Client) UploadNzb(titleID, qualite int, langues, subs []string, nzbPath
 	return &result, nil
 }
 
-func (c *Client) UploadLien(titleID, qualite int, langues, subs []string, lien, nfo string, saison, episode int) (*UploadLienResult, error) {
+func (c *Client) UploadLien(titleID, qualite int, langues, subs []string, lien, nfo string, saison, episode int, fullSaison bool) (*UploadLienResult, error) {
 	// Format réel du site Hydracker (use-create-lien.ts) :
 	// - typefile:"DDL" obligatoire
 	// - start_epi = numéro d'épisode (string), episode = nombre d'épisodes couverts (int, 1 pour un seul)
+	// - full_saison = 1 si saison complète, sinon 0
 	payload := map[string]any{
 		"title_id":    titleID,
 		"typefile":    "DDL",
@@ -165,13 +172,16 @@ func (c *Client) UploadLien(titleID, qualite int, langues, subs []string, lien, 
 		"full_saison": 0,
 		"episode":     1,
 	}
+	if fullSaison {
+		payload["full_saison"] = 1
+	}
 	if len(subs) > 0 {
 		payload["subs"] = subs
 	}
 	if saison > 0 {
 		payload["saison"] = saison
 	}
-	if episode > 0 {
+	if episode > 0 && !fullSaison {
 		payload["start_epi"] = strconv.Itoa(episode)
 	}
 	if nfo != "" {

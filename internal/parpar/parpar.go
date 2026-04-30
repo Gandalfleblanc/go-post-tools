@@ -5,10 +5,12 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
+	"strings"
 
 	"go-post-tools/internal/binutil"
 	"go-post-tools/internal/config"
@@ -32,13 +34,49 @@ func binaryPath() string {
 	return "parpar"
 }
 
+// Run génère les .par2 pour un fichier OU un dossier. Si inputPath est un dossier,
+// les .par2 sont nommés d'après le dossier (ex: /path/MyShow.S01/ → /path/MyShow.S01.par2)
+// et couvrent tous les fichiers du dossier (récursif). Pour un fichier single, c'est
+// l'ancien comportement (par2 nommés d'après le file basename).
+//
+// Retourne le path du .par2 principal généré (utile au caller pour le globbing).
 func Run(ctx context.Context, cfg *config.Config, inputPath string, onProgress func(Progress)) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	ext := filepath.Ext(inputPath)
-	base := inputPath[:len(inputPath)-len(ext)]
-	outPath := base + ".par2"
+	stat, err := os.Stat(inputPath)
+	if err != nil {
+		return fmt.Errorf("stat input: %w", err)
+	}
+
+	// Calcule le par2 output path et la liste des inputs à passer à parpar
+	var outPath string
+	var inputs []string
+	if stat.IsDir() {
+		// Folder : par2 nommés d'après le dossier, walk récursif pour les fichiers
+		base := strings.TrimRight(inputPath, string(filepath.Separator))
+		outPath = base + ".par2"
+		walkErr := filepath.Walk(inputPath, func(p string, info os.FileInfo, e error) error {
+			if e != nil {
+				return e
+			}
+			if !info.IsDir() {
+				inputs = append(inputs, p)
+			}
+			return nil
+		})
+		if walkErr != nil {
+			return fmt.Errorf("walk %s: %w", inputPath, walkErr)
+		}
+		if len(inputs) == 0 {
+			return fmt.Errorf("dossier vide: %s", inputPath)
+		}
+	} else {
+		ext := filepath.Ext(inputPath)
+		base := inputPath[:len(inputPath)-len(ext)]
+		outPath = base + ".par2"
+		inputs = []string{inputPath}
+	}
 
 	sliceSize := cfg.ParParSliceSize
 	if sliceSize <= 0 {
@@ -58,8 +96,9 @@ func Run(ctx context.Context, cfg *config.Config, inputPath string, onProgress f
 		"-r", fmt.Sprintf("%.0f%%", redundancy),
 		"-t", strconv.Itoa(threads),
 		"-o", outPath,
-		"--", inputPath,
+		"--",
 	}
+	args = append(args, inputs...)
 
 	cmd := exec.CommandContext(ctx, binaryPath(), args...)
 	stderr, err := cmd.StderrPipe()

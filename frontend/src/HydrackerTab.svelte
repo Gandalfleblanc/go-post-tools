@@ -1,7 +1,7 @@
 <script>
   import { onMount, onDestroy } from 'svelte'
   import { EventsOn, EventsOff, OnFileDrop, OnFileDropOff } from '../wailsjs/runtime/runtime.js'
-  import { ParseFilename, TMDBSearch, TMDBGetByID, HydrackerSearch, HydrackerGetByTmdbID, HydrackerGetByID, OpenBrowser, OpenHydrackerAdmin, SelectMkvFile, SelectMkvFiles, PostTorrentWorkflow, PostExistingTorrent, PostNzbWorkflow, PostDDLWorkflow, FetchImageBase64, GetMetaQualities, GetMetaLangs, GetMetaSubs, GetFileSize, ReadFileChunk, MediaSearch, CancelAllWorkflows, Notify, CancelDDLHost, SkipCurrentEpisode, IsTorrentAdminAcknowledged } from '../wailsjs/go/main/App.js'
+  import { ParseFilename, TMDBSearch, TMDBGetByID, HydrackerSearch, HydrackerGetByTmdbID, HydrackerGetByID, OpenBrowser, OpenHydrackerAdmin, SelectMkvFile, SelectMkvFiles, SelectFolder, SelectArchiveFile, PrepareSeasonFolder, FindFirstMkvInFolder, PostTorrentWorkflow, PostExistingTorrent, PostNzbWorkflow, PostDDLWorkflow, FetchImageBase64, GetMetaQualities, GetMetaLangs, GetMetaSubs, GetFileSize, ReadFileChunk, MediaSearch, CancelAllWorkflows, Notify, CancelDDLHost, SkipCurrentEpisode, IsTorrentAdminAcknowledged } from '../wailsjs/go/main/App.js'
   import { addLog } from './logs.js'
   import { LANGUAGES as HYD_LANGUAGES, SUBS as HYD_SUBS } from './hydrackerData.js'
 
@@ -63,6 +63,10 @@
   let postDdlHosts = { onefichier: true, sendcm: true }
   let postSeason = 0
   let postEpisode = 0
+  let postFullSaison = false  // toggle "Saison complète" — désactive le numéro d'épisode
+  let postNfoManual = ''      // NFO custom écrit par l'user (override la génération auto)
+  let nfoEditMode = false     // true = textarea éditable, false = preview readonly
+  let seasonMenuOpen = false  // popup du bouton "Saison complète" (Dossier / Plusieurs MKV)
 
   // Fichiers sélectionnés pour l'upload
   let mkvFilePath = ''
@@ -592,9 +596,10 @@
         addLog('LANG', `pistes audio : ${tracks.map((t, i) => `#${i+1} "${t.title || t.language || '?'}" → ${matched[i]?.name || '?'}`).join(' · ')}`)
         primaryDone = true
       }
-    } else if (fileInfo?.languages?.length) {
-      // Fallback sur le parser, sans les tags génériques ni les tags de sous-titrage
-      // (VOSTFR, VO, VOST, VOA = "audio original + sous-titres", PAS une langue audio)
+    } else if (mediaInfo && fileInfo?.languages?.length) {
+      // Fallback parser : SEULEMENT si mediaInfo a répondu mais sans piste audio
+      // exploitable. Sinon le bloc lock le flag avant que mediaInfo arrive et
+      // les pistes ENG/FR détectées sont ignorées (cas folder + 1er MKV).
       const clean = fileInfo.languages.filter(l => !['multi','multil','dual','vff','vostfr','vo','vost','voa'].includes(l.toLowerCase()))
       if (clean.length) {
         postLanguages = dedupeById(clean.map(matchLang))
@@ -722,7 +727,9 @@
     if (f) await loadFileFromPath(null, f.name)  // parcourir : pas de chemin OS, juste le nom
   }
 
-  async function loadFileFromPath(path, name) {
+  async function loadFileFromPath(path, name, opts = {}) {
+    const isFolder = !!opts.isFolder
+    const isArchive = !!opts.isArchive
     const filename = name || path.split(/[\\/]/).pop()
     if (path) mkvFilePath = path
     mediaInfo = null
@@ -740,20 +747,35 @@
     postSubs = []
     postSeason = 0
     postEpisode = 0
+    postFullSaison = isFolder || isArchive  // dossier/archive = saison complète par défaut
+    postNfoManual = ''
+    nfoEditMode = isArchive  // archive = pas de mediaInfo → édition manuelle. Folder = on tente sur le 1er MKV.
     langsAutoFilled = false
     subsAutoFilled = false
 
     // Objet file synthétique pour afficher le nom
     file = { name: filename }
 
-    // 1. Parser le nom de fichier
+    // 1. Parser le nom de fichier (ou nom du dossier pour les saisons complètes)
     fileInfo = await ParseFilename(filename)
-    addLog('TMDB', `parse : title="${fileInfo?.title || ''}" year="${fileInfo?.year || ''}" S${fileInfo?.season || 0}E${fileInfo?.episode || 0}`)
+    addLog('TMDB', `parse : title="${fileInfo?.title || ''}" year="${fileInfo?.year || ''}" S${fileInfo?.season || 0}E${fileInfo?.episode || 0}${isFolder ? ' (dossier saison)' : isArchive ? ' (archive saison)' : ''}`)
     if (fileInfo?.season) postSeason = fileInfo.season
-    if (fileInfo?.episode) postEpisode = fileInfo.episode
+    if (fileInfo?.episode && !isFolder && !isArchive) postEpisode = fileInfo.episode
 
-    // 2. MediaInfo via Go (chemin filesystem réel)
-    if (path) await analyzeMediaInfoFromPath(path)
+    // 2. MediaInfo via Go : pour un fichier direct, OU pour le 1er MKV du dossier (saison complète)
+    if (path && !isArchive) {
+      let miPath = path
+      if (isFolder) {
+        try {
+          miPath = await FindFirstMkvInFolder(path)
+          addLog('MI', `📂 saison : analyse du 1er épisode → ${miPath.split('/').pop()}`)
+        } catch(e) {
+          addLog('MI', `⚠ pas de MKV trouvé dans le dossier : ${e}`)
+          miPath = ''
+        }
+      }
+      if (miPath) await analyzeMediaInfoFromPath(miPath)
+    }
 
     // 3. Recherche TMDB automatique
     if (fileInfo?.title) {
@@ -1110,7 +1132,10 @@
     lines.push(`  Hydracker · ${new Date().toLocaleDateString('fr-FR')}`)
     return lines.join('\n')
   }
-  $: nfoPreview = (file && (mediaInfo || fileInfo)) ? generateNFO() : ''
+  // Le NFO effectif : manuel si l'user en a saisi un, sinon généré auto.
+  $: nfoPreview = postNfoManual.trim()
+    ? postNfoManual
+    : ((file && (mediaInfo || fileInfo)) ? generateNFO() : '')
 
   // --- Post ---
   async function lancerPost() {
@@ -1127,7 +1152,7 @@
     const subIDs  = postSubs.filter(s => s.id > 0).map(s => s.name)
     // Le site Hydracker rend le NFO en HTML — on wrappe dans <pre> pour préserver
     // les retours à la ligne et le formatage monospace.
-    const nfoText = generateNFO()
+    const nfoText = postNfoManual.trim() || generateNFO()
     const nfo     = nfoText ? `<pre>${nfoText.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</pre>` : ''
     const errors = []
     const successes = []
@@ -1166,14 +1191,14 @@
       // (ex: seedbox refuse), on remonte l'erreur et l'user relance manuellement.
       if (existingTorrentPath) {
         try {
-          const r = await PostExistingTorrent(titleID, postQuality, langIDs, subIDs, existingTorrentPath, nfo, postSeason, postEpisode)
+          const r = await PostExistingTorrent(titleID, postQuality, langIDs, subIDs, existingTorrentPath, nfo, postSeason, postEpisode, postFullSaison)
           if (!r?.hydracker_id) throw new Error('pas de hydracker_id dans la réponse')
           successes.push(`Torrent #${r.hydracker_id} ajouté sur Hydracker (mode existant)`)
         } catch(e) { errors.push(`Torrent : ${e}`) }
       } else if (!mkvFilePath) errors.push('Torrent : chemin MKV introuvable')
       else {
         try {
-          const r = await PostTorrentWorkflow(titleID, postQuality, langIDs, subIDs, mkvFilePath, nfo, postSeason, postEpisode, seedboxType)
+          const r = await PostTorrentWorkflow(titleID, postQuality, langIDs, subIDs, mkvFilePath, nfo, postSeason, postEpisode, seedboxType, postFullSaison)
           if (!r?.hydracker_id) throw new Error('pas de hydracker_id dans la réponse')
           successes.push(`Torrent #${r.hydracker_id} ajouté + seedbox ${seedboxType.toUpperCase()} OK`)
         } catch(e) { errors.push(`Torrent ${seedboxType.toUpperCase()} : ${e}`) }
@@ -1186,7 +1211,7 @@
       else tasks.push(
         withRetry(
           'NZB',
-          () => PostNzbWorkflow(titleID, postQuality, langIDs, subIDs, mkvFilePath, nfo, postSeason, postEpisode),
+          () => PostNzbWorkflow(titleID, postQuality, langIDs, subIDs, mkvFilePath, nfo, postSeason, postEpisode, postFullSaison),
           r => !!r?.nzb_path,
         )
           .then(r => successes.push(`NZB #${r.hydracker_id} ajouté`))
@@ -1198,7 +1223,7 @@
       else tasks.push(
         withRetry(
           'DDL',
-          () => PostDDLWorkflow(titleID, postQuality, langIDs, subIDs, mkvFilePath, nfo, postDdlHosts.onefichier, postDdlHosts.sendcm, postSeason, postEpisode),
+          () => PostDDLWorkflow(titleID, postQuality, langIDs, subIDs, mkvFilePath, nfo, postDdlHosts.onefichier, postDdlHosts.sendcm, postSeason, postEpisode, postFullSaison),
           r => !!(r?.links?.length),
         )
           .then(r => {
@@ -1324,13 +1349,43 @@
     role="region" aria-label="Zone de dépôt">
     <div class="drop-icon">🎬</div>
     <p>Glissez un fichier <strong>.mkv</strong> ici</p>
-    <p class="drop-sub">ou</p>
-    <button class="btn-browse" on:click={async () => {
-      const paths = await SelectMkvFiles()
-      if (!paths?.length) return
-      if (paths.length === 1) loadFileFromPath(paths[0], null)
-      else paths.forEach(p => enqueue(p))
-    }}>Parcourir</button>
+    <p class="drop-sub">ou pour une saison complète, glissez un <strong>dossier</strong> / archive</p>
+    <div class="drop-buttons">
+      <button class="btn-browse" on:click={async () => {
+        const paths = await SelectMkvFiles()
+        if (!paths?.length) return
+        if (paths.length === 1) loadFileFromPath(paths[0], null)
+        else paths.forEach(p => enqueue(p))
+      }}>📄 Parcourir MKV</button>
+      <div class="dropdown-wrapper">
+        <button class="btn-browse" on:click={() => seasonMenuOpen = !seasonMenuOpen}>
+          📁 Saison complète {seasonMenuOpen ? '▴' : '▾'}
+        </button>
+        {#if seasonMenuOpen}
+          <div class="dropdown-menu">
+            <button on:click={async () => {
+              seasonMenuOpen = false
+              const path = await SelectFolder()
+              if (path) loadFileFromPath(path, null, { isFolder: true })
+            }}>📁 Dossier</button>
+            <button on:click={async () => {
+              seasonMenuOpen = false
+              const paths = await SelectMkvFiles()
+              if (!paths?.length) return
+              try {
+                const tempFolder = await PrepareSeasonFolder(paths)
+                loadFileFromPath(tempFolder, null, { isFolder: true })
+                addLog('NZB', `📚 ${paths.length} MKV regroupés dans ${tempFolder.split('/').pop()}`)
+              } catch(e) { addLog('NZB', `✗ PrepareSeasonFolder : ${e}`) }
+            }}>📚 Plusieurs MKV</button>
+          </div>
+        {/if}
+      </div>
+      <button class="btn-browse" on:click={async () => {
+        const path = await SelectArchiveFile()
+        if (path) loadFileFromPath(path, null, { isArchive: true })
+      }}>📦 Archive (DDL)</button>
+    </div>
   </div>
 
   {:else}
@@ -1497,7 +1552,7 @@
           file = null; fileInfo = null; selectedTMDB = null;
           selectedHydracker = null; mediaInfo = null; posterDataUrl = ''; hydrackerPosterUrl = '';
           postQuality = 0; postLanguages = []; postSubs = [];
-          postSeason = 0; postEpisode = 0;
+          postSeason = 0; postEpisode = 0; postFullSaison = false;
           mkvFilePath = ''; existingTorrentPath = ''; postResult = null;
         }}>↺ Réinitialiser</button>
       </div>
@@ -1607,8 +1662,13 @@
                 <div class="post-field-label">Saison / Épisode</div>
                 <div class="se-row">
                   <label class="se-label">Saison <input type="number" min="0" class="se-input" bind:value={postSeason} /></label>
-                  <label class="se-label">Épisode <input type="number" min="0" class="se-input" bind:value={postEpisode} /></label>
+                  <label class="se-label">Épisode <input type="number" min="0" class="se-input" bind:value={postEpisode} disabled={postFullSaison} title={postFullSaison ? 'Désactivé : saison complète' : ''} /></label>
                 </div>
+                <label class="full-saison-toggle">
+                  <input type="checkbox" bind:checked={postFullSaison} />
+                  <span>📦 Saison complète</span>
+                  <span class="full-saison-hint">{postFullSaison ? '(le post couvre toute la saison)' : ''}</span>
+                </label>
               </div>
             {:else}<div></div>{/if}
 
@@ -1939,15 +1999,28 @@
           {/if}
         </div>
 
-        {#if nfoPreview}
+        {#if file}
           <div class="nfo-preview" class:open={nfoOpen}>
             <button type="button" class="nfo-preview-header" on:click={() => nfoOpen = !nfoOpen}>
               <span class="mi-chevron">{nfoOpen ? '▾' : '▸'}</span>
-              <span>📝 NFO (inclus dans NZB + DDL + Torrent)</span>
+              <span>📝 NFO (inclus dans NZB + DDL + Torrent){postNfoManual.trim() ? ' — édité' : ''}</span>
+              <button class="btn-copy" title={nfoEditMode ? 'Mode preview' : 'Mode édition'} on:click|stopPropagation={() => nfoEditMode = !nfoEditMode}>{nfoEditMode ? '👁' : '✏️'}</button>
               <button class="btn-copy" title="Copier" on:click|stopPropagation={() => navigator.clipboard.writeText(nfoPreview)}>📋</button>
             </button>
             {#if nfoOpen}
-              <pre class="nfo-preview-body">{nfoPreview}</pre>
+              {#if nfoEditMode}
+                <textarea class="nfo-edit" bind:value={postNfoManual}
+                  placeholder={(file && (mediaInfo || fileInfo)) ? 'Vide = utilise le NFO auto-généré ci-dessous. Tape ton NFO custom ici pour overrider.' : 'Tape ton NFO custom ici (saison complète : pas de MediaInfo auto).'}
+                  rows="14"></textarea>
+                {#if !postNfoManual.trim() && nfoPreview}
+                  <pre class="nfo-preview-body" style="opacity:0.5;border-top:1px dashed var(--border);margin-top:6px"><span style="color:var(--text3);font-size:10px">↓ NFO auto (sera utilisé si tu laisses vide)</span>
+{nfoPreview}</pre>
+                {/if}
+              {:else if nfoPreview}
+                <pre class="nfo-preview-body">{nfoPreview}</pre>
+              {:else}
+                <div class="nfo-preview-body" style="color:var(--text3);font-style:italic">— Pas de NFO généré (clique ✏️ pour en saisir un manuellement)</div>
+              {/if}
             {/if}
           </div>
         {/if}
@@ -2061,6 +2134,31 @@
   .drop-icon { font-size: 48px; margin-bottom: 12px; }
   .dropzone p { margin-bottom: 6px; font-size: 15px; color: var(--text2); }
   .drop-sub { font-size: 12px; color: var(--text3); }
+  .drop-buttons { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; margin-top: 8px; }
+  .dropdown-wrapper { position: relative; display: inline-block; }
+  .dropdown-menu {
+    position: absolute;
+    top: calc(100% + 4px); left: 0;
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 4px;
+    display: flex; flex-direction: column;
+    min-width: 160px;
+    z-index: 10;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+  }
+  .dropdown-menu button {
+    background: transparent;
+    border: none;
+    color: var(--text);
+    padding: 8px 12px;
+    text-align: left;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 13px;
+  }
+  .dropdown-menu button:hover { background: rgba(255,255,255,0.05); }
   .btn-browse {
     display: inline-block; margin-top: 14px;
     color: #fff; background: var(--grad-primary);
@@ -2385,6 +2483,18 @@
   .se-row { display: flex; gap: 10px; }
   .se-label { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--text2); }
   .se-input { width: 70px; padding: 4px 8px; font-size: 12px; }
+  .se-input:disabled { opacity: 0.4; cursor: not-allowed; }
+  .full-saison-toggle {
+    display: flex; align-items: center; gap: 6px;
+    margin-top: 6px;
+    font-size: 12px;
+    color: var(--text2);
+    cursor: pointer;
+    user-select: none;
+  }
+  .full-saison-toggle input[type="checkbox"] { cursor: pointer; }
+  .full-saison-toggle:has(input:checked) > span:first-of-type { color: #93c5fd; font-weight: 600; }
+  .full-saison-hint { color: var(--text3); font-size: 11px; font-style: italic; }
 
   .chips-row { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 4px; min-height: 24px; align-items: center; }
   .chips-empty { font-size: 11px; color: var(--text3); font-style: italic; }
@@ -2696,6 +2806,20 @@
   .nfo-preview-header:hover { background: rgba(255,255,255,0.03); }
   .nfo-preview.open .nfo-preview-header { border-bottom: 1px solid var(--border); }
   .nfo-preview .nfo-preview-body { margin: 0 14px 14px; }
+  .nfo-edit {
+    margin: 0 14px 14px;
+    width: calc(100% - 28px);
+    background: rgba(0,0,0,0.3);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 10px;
+    font-family: ui-monospace, monospace;
+    font-size: 11px;
+    resize: vertical;
+    min-height: 200px;
+  }
+  .nfo-edit:focus { outline: none; border-color: var(--blue-hot); }
   .nfo-preview-body {
     margin: 0; padding: 12px;
     background: rgba(0,0,0,0.4);

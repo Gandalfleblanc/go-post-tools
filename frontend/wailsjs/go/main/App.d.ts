@@ -59,6 +59,8 @@ export function FicheGetContent(arg1:number):Promise<main.FicheContent>;
 
 export function FicheGetNfo(arg1:string,arg2:number):Promise<string>;
 
+export function FindFirstMkvInFolder(arg1:string):Promise<string>;
+
 export function FindHydrackerSources(arg1:number,arg2:number,arg3:number):Promise<main.FindHydrackerSourcesResult>;
 
 export function GetConfig():Promise<config.Config>;
@@ -145,19 +147,21 @@ export function OpenHydrackerAdmin():Promise<void>;
 
 export function ParseFilename(arg1:string):Promise<parser.FileInfo>;
 
-export function PostDDLWorkflow(arg1:number,arg2:number,arg3:Array<string>,arg4:Array<string>,arg5:string,arg6:string,arg7:boolean,arg8:boolean,arg9:number,arg10:number):Promise<main.DDLWorkflowResult>;
+export function PostDDLWorkflow(arg1:number,arg2:number,arg3:Array<string>,arg4:Array<string>,arg5:string,arg6:string,arg7:boolean,arg8:boolean,arg9:number,arg10:number,arg11:boolean):Promise<main.DDLWorkflowResult>;
 
-export function PostExistingTorrent(arg1:number,arg2:number,arg3:Array<string>,arg4:Array<string>,arg5:string,arg6:string,arg7:number,arg8:number):Promise<main.TorrentWorkflowResult>;
+export function PostExistingTorrent(arg1:number,arg2:number,arg3:Array<string>,arg4:Array<string>,arg5:string,arg6:string,arg7:number,arg8:number,arg9:boolean):Promise<main.TorrentWorkflowResult>;
 
-export function PostLien(arg1:number,arg2:number,arg3:Array<string>,arg4:Array<string>,arg5:string,arg6:string,arg7:number,arg8:number):Promise<api.UploadLienResult>;
+export function PostLien(arg1:number,arg2:number,arg3:Array<string>,arg4:Array<string>,arg5:string,arg6:string,arg7:number,arg8:number,arg9:boolean):Promise<api.UploadLienResult>;
 
-export function PostNzb(arg1:number,arg2:number,arg3:Array<string>,arg4:Array<string>,arg5:string,arg6:string,arg7:number,arg8:number):Promise<api.UploadNzbResult>;
+export function PostNzb(arg1:number,arg2:number,arg3:Array<string>,arg4:Array<string>,arg5:string,arg6:string,arg7:number,arg8:number,arg9:boolean):Promise<api.UploadNzbResult>;
 
-export function PostNzbWorkflow(arg1:number,arg2:number,arg3:Array<string>,arg4:Array<string>,arg5:string,arg6:string,arg7:number,arg8:number):Promise<main.NzbWorkflowResult>;
+export function PostNzbWorkflow(arg1:number,arg2:number,arg3:Array<string>,arg4:Array<string>,arg5:string,arg6:string,arg7:number,arg8:number,arg9:boolean):Promise<main.NzbWorkflowResult>;
 
-export function PostTorrent(arg1:number,arg2:number,arg3:Array<string>,arg4:Array<string>,arg5:string,arg6:string,arg7:number,arg8:number):Promise<api.UploadTorrentResult>;
+export function PostTorrent(arg1:number,arg2:number,arg3:Array<string>,arg4:Array<string>,arg5:string,arg6:string,arg7:number,arg8:number,arg9:boolean):Promise<api.UploadTorrentResult>;
 
-export function PostTorrentWorkflow(arg1:number,arg2:number,arg3:Array<string>,arg4:Array<string>,arg5:string,arg6:string,arg7:number,arg8:number,arg9:string):Promise<main.TorrentWorkflowResult>;
+export function PostTorrentWorkflow(arg1:number,arg2:number,arg3:Array<string>,arg4:Array<string>,arg5:string,arg6:string,arg7:number,arg8:number,arg9:string,arg10:boolean):Promise<main.TorrentWorkflowResult>;
+
+export function PrepareSeasonFolder(arg1:Array<string>):Promise<string>;
 
 export function ReadFileChunk(arg1:string,arg2:number,arg3:number):Promise<Array<number>>;
 
@@ -170,6 +174,10 @@ export function ReseedPrepare(arg1:string):Promise<main.ReseedPrepareResult>;
 export function SaveConfig(arg1:config.Config):Promise<void>;
 
 export function SelectAnyTorrentFile():Promise<string>;
+
+export function SelectArchiveFile():Promise<string>;
+
+export function SelectFolder():Promise<string>;
 
 export function SelectMkvFile():Promise<string>;
 
