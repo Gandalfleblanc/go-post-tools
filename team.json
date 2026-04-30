@@ -37,7 +37,11 @@
         "myuploads",
         "history",
         "manager",
-        "log"
+        "log",
+        "logs"
+      ],
+      "permissions": [
+        "torrent_admin"
       ]
     },
     "modo": {
