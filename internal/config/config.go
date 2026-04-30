@@ -90,6 +90,19 @@ type Config struct {
 	FTPModPassword string `json:"ftp_mod_password"`
 	FTPModPath     string `json:"ftp_mod_path"`
 
+	// NextCloud ADMIN — remplace le FTP ADMIN historique. L'app upload le MKV
+	// via WebDAV PUT, et le qBittorrent ADMIN (qui partage le filesystem côté
+	// serveur) hash le fichier et seed.
+	NextcloudAdminURL      string `json:"nextcloud_admin_url"`
+	NextcloudAdminUser     string `json:"nextcloud_admin_user"`
+	NextcloudAdminPassword string `json:"nextcloud_admin_password"`
+	NextcloudAdminPath     string `json:"nextcloud_admin_path"` // remote path (ex: "/" pour la racine)
+
+	// qBittorrent ADMIN — remplace ruTorrent ADMIN (cfg.SeedboxURL).
+	QBitAdminURL      string `json:"qbit_admin_url"`
+	QBitAdminUser     string `json:"qbit_admin_user"`
+	QBitAdminPassword string `json:"qbit_admin_password"`
+
 	// Hash sha256 du mot de passe qui protège les 4 sections seedbox/FTP
 	// (FTP RUTORRENT, FTP MODÉRATEUR, Seedbox ruTorrent, Seedbox qBit).
 	// Mutualisé pour 1 mdp partagé entre admins.
@@ -179,6 +192,17 @@ var (
 	DefaultFTPModPassword = ""
 	DefaultFTPModPath     = ""
 
+	// NextCloud ADMIN — team-shared, baké au build via secrets GitHub.
+	DefaultNextcloudAdminURL      = ""
+	DefaultNextcloudAdminUser     = ""
+	DefaultNextcloudAdminPassword = ""
+	DefaultNextcloudAdminPath     = ""
+
+	// qBittorrent ADMIN (URL différente du qBit MODO)
+	DefaultQBitAdminURL      = ""
+	DefaultQBitAdminUser     = ""
+	DefaultQBitAdminPassword = ""
+
 	DefaultTrackerURL = ""
 
 	// TMDB : URLs bakées au build pour verrouiller la section TMDB côté user.
@@ -235,6 +259,13 @@ func Load() *Config {
 	override(&cfg.FTPModUser, DefaultFTPModUser)
 	override(&cfg.FTPModPassword, DefaultFTPModPassword)
 	override(&cfg.FTPModPath, DefaultFTPModPath)
+	override(&cfg.NextcloudAdminURL, DefaultNextcloudAdminURL)
+	override(&cfg.NextcloudAdminUser, DefaultNextcloudAdminUser)
+	override(&cfg.NextcloudAdminPassword, DefaultNextcloudAdminPassword)
+	override(&cfg.NextcloudAdminPath, DefaultNextcloudAdminPath)
+	override(&cfg.QBitAdminURL, DefaultQBitAdminURL)
+	override(&cfg.QBitAdminUser, DefaultQBitAdminUser)
+	override(&cfg.QBitAdminPassword, DefaultQBitAdminPassword)
 	override(&cfg.TrackerURL, DefaultTrackerURL)
 	override(&cfg.TMDBProxyURL, DefaultTMDBProxyURL)
 	override(&cfg.MediaSearchURL, DefaultMediaSearchURL)

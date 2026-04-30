@@ -52,6 +52,13 @@
   // Torrent ADMIN n'est visible que pour les admins (= ceux qui ont déverrouillé
   // la section Seedbox dans Réglages avec le mdp partagé).
   let adminAcknowledged = false
+  // Lit les permissions de l'user connecté (alimenté par App.svelte au login).
+  // "torrent_admin" = autorise l'utilisation du bouton "Torrent ADMIN".
+  $: hasTorrentAdminPerm = (() => {
+    if (typeof window === 'undefined') return false
+    const perms = /** @type {any} */ (window).__myPermissions
+    return Array.isArray(perms) && perms.includes('torrent_admin')
+  })()
 
   let postDdlHosts = { onefichier: true, sendcm: true }
   let postSeason = 0
@@ -546,6 +553,12 @@
       if (isH265) qualID = findQual('web', '1080p', 'x265') || findQual('webrip', '1080p', 'x265') || findQual('web', 'x265') || findQual('webrip', 'x265')
       if (!qualID && is1080p) qualID = findQual('web', '1080p') || findQual('webrip', '1080p')
       if (!qualID) qualID = (bitrate > 0 && bitrate <= 3000) ? 94 : 4 // Fallback : WEB 1080p Light sinon WEB
+    } else if (/\bremux\b/i.test(name)) {
+      // REMUX : rip BluRay intouché (x264 généralement, full bitrate). Doit être
+      // testé AVANT la règle BluRay (sinon le mot "BluRay" du filename match d'abord
+      // et REMUX retombe en BluRay simple si pas de x265).
+      if (is2160p) qualID = findQual('remux', '2160p') || findQual('remux', '4k')
+      if (!qualID) qualID = findQual('bluray', 'remux', '1080p') || findQual('remux', '1080p') || findQual('bluray', 'remux') || findQual('remux')
     } else if (/\bblu-?ray\b/.test(name)) {
       if (isH265) qualID = findQual('bluray', 'x265')
       if (!qualID && bitrate > 0 && bitrate <= 3000) qualID = 50 // HDLight 1080p
@@ -1640,17 +1653,19 @@
             <div class="post-field">
               <div class="post-field-label">Uploader via</div>
               <div class="upload-pills">
-                <button type="button"
-                  class="upload-pill"
-                  class:active={postUploadTypes.torrent_admin}
-                  data-color="gold"
-                  title="Workflow team-shared : FTP ADMIN + seedbox ruTorrent de la team"
-                  on:click={() => {
-                    const v = !postUploadTypes.torrent_admin
-                    postUploadTypes = { ...postUploadTypes, torrent_admin: v, torrent_modo: v?false:postUploadTypes.torrent_modo, torrent_prive: v?false:postUploadTypes.torrent_prive }
-                  }}>
-                  <span class="pill-icon">👑</span><span class="pill-label">Torrent ADMIN</span>
-                </button>
+                {#if hasTorrentAdminPerm}
+                  <button type="button"
+                    class="upload-pill"
+                    class:active={postUploadTypes.torrent_admin}
+                    data-color="gold"
+                    title="Workflow team-shared : NextCloud + qBittorrent ADMIN"
+                    on:click={() => {
+                      const v = !postUploadTypes.torrent_admin
+                      postUploadTypes = { ...postUploadTypes, torrent_admin: v, torrent_modo: v?false:postUploadTypes.torrent_modo, torrent_prive: v?false:postUploadTypes.torrent_prive }
+                    }}>
+                    <span class="pill-icon">👑</span><span class="pill-label">Torrent ADMIN</span>
+                  </button>
+                {/if}
                 <button type="button"
                   class="upload-pill"
                   class:active={postUploadTypes.torrent_modo}
@@ -1769,7 +1784,7 @@
 
                 <div class="ddl-step">
                   <div class="ddl-step-label">
-                    <span>1. {postUploadTypes.torrent_modo ? 'Upload FTP Modérateur' : 'Upload FTP'}</span>
+                    <span>1. {postUploadTypes.torrent_modo ? 'Upload FTP Modérateur' : 'Upload WebDAV NextCloud'}</span>
                     <span class="ddl-bar-speed">{torrentState.ftpSpeed.toFixed(1)} MB/s · {torrentState.ftpPct.toFixed(0)}%</span>
                   </div>
                   <div class="progress-bar"><div class="progress-fill" style="width:{torrentState.ftpPct}%"></div></div>
