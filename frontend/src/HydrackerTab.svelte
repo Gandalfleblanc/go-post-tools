@@ -66,7 +66,8 @@
   let postFullSaison = false  // toggle "Saison complète" — désactive le numéro d'épisode
   let postNfoManual = ''      // NFO custom écrit par l'user (override la génération auto)
   let nfoEditMode = false     // true = textarea éditable, false = preview readonly
-  let seasonMenuOpen = false  // popup du bouton "Saison complète" (Dossier / Plusieurs MKV)
+  let seasonMenuOpen = false  // (legacy, plus utilisé)
+  let pendingMultiPaths = null  // array des paths quand l'user a sélectionné plusieurs MKV — choisir queue ou saison
 
   // Fichiers sélectionnés pour l'upload
   let mkvFilePath = ''
@@ -1342,6 +1343,41 @@
     </div>
   {/if}
 
+  <!-- Modal multi-MKV : choisir queue ou saison complète -->
+  {#if pendingMultiPaths}
+    <div class="multi-modal-bg" on:click|self={() => pendingMultiPaths = null}>
+      <div class="multi-modal">
+        <div class="multi-modal-title">📚 {pendingMultiPaths.length} fichiers sélectionnés</div>
+        <div class="multi-modal-msg">Comment veux-tu les traiter ?</div>
+        <div class="multi-modal-actions">
+          <button class="multi-btn multi-btn-saison" on:click={async () => {
+            const paths = pendingMultiPaths
+            pendingMultiPaths = null
+            try {
+              const tempFolder = await PrepareSeasonFolder(paths)
+              loadFileFromPath(tempFolder, null, { isFolder: true })
+              addLog('QUEUE', `📚 ${paths.length} MKV regroupés en saison → ${tempFolder.split('/').pop()}`)
+            } catch(e) { addLog('QUEUE', `✗ PrepareSeasonFolder : ${e}`) }
+          }}>
+            <div class="multi-btn-emoji">📦</div>
+            <div class="multi-btn-label">Saison complète</div>
+            <div class="multi-btn-hint">1 post combiné, full_saison=1</div>
+          </button>
+          <button class="multi-btn multi-btn-queue" on:click={() => {
+            const paths = pendingMultiPaths
+            pendingMultiPaths = null
+            paths.forEach(p => enqueue(p))
+          }}>
+            <div class="multi-btn-emoji">📋</div>
+            <div class="multi-btn-label">Queue</div>
+            <div class="multi-btn-hint">1 post par épisode</div>
+          </button>
+        </div>
+        <button class="multi-cancel" on:click={() => pendingMultiPaths = null}>Annuler</button>
+      </div>
+    </div>
+  {/if}
+
   <!-- Zone de drop -->
   {#if !file}
   <div class="dropzone" class:drag={dragOver}
@@ -1354,33 +1390,17 @@
       <button class="btn-browse" on:click={async () => {
         const paths = await SelectMkvFiles()
         if (!paths?.length) return
-        if (paths.length === 1) loadFileFromPath(paths[0], null)
-        else paths.forEach(p => enqueue(p))
+        if (paths.length === 1) {
+          loadFileFromPath(paths[0], null)
+          return
+        }
+        // Multi-fichiers : ouvre le modal pour choisir queue ou saison
+        pendingMultiPaths = paths
       }}>📄 Parcourir MKV</button>
-      <div class="dropdown-wrapper">
-        <button class="btn-browse" on:click={() => seasonMenuOpen = !seasonMenuOpen}>
-          📁 Saison complète {seasonMenuOpen ? '▴' : '▾'}
-        </button>
-        {#if seasonMenuOpen}
-          <div class="dropdown-menu">
-            <button on:click={async () => {
-              seasonMenuOpen = false
-              const path = await SelectFolder()
-              if (path) loadFileFromPath(path, null, { isFolder: true })
-            }}>📁 Dossier</button>
-            <button on:click={async () => {
-              seasonMenuOpen = false
-              const paths = await SelectMkvFiles()
-              if (!paths?.length) return
-              try {
-                const tempFolder = await PrepareSeasonFolder(paths)
-                loadFileFromPath(tempFolder, null, { isFolder: true })
-                addLog('NZB', `📚 ${paths.length} MKV regroupés dans ${tempFolder.split('/').pop()}`)
-              } catch(e) { addLog('NZB', `✗ PrepareSeasonFolder : ${e}`) }
-            }}>📚 Plusieurs MKV</button>
-          </div>
-        {/if}
-      </div>
+      <button class="btn-browse" on:click={async () => {
+        const path = await SelectFolder()
+        if (path) loadFileFromPath(path, null, { isFolder: true })
+      }}>📁 Dossier saison</button>
       <button class="btn-browse" on:click={async () => {
         const path = await SelectArchiveFile()
         if (path) loadFileFromPath(path, null, { isArchive: true })
@@ -2135,6 +2155,52 @@
   .dropzone p { margin-bottom: 6px; font-size: 15px; color: var(--text2); }
   .drop-sub { font-size: 12px; color: var(--text3); }
   .drop-buttons { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; margin-top: 8px; }
+  .multi-modal-bg {
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,0.6);
+    backdrop-filter: blur(4px);
+    z-index: 1000;
+    display: flex; justify-content: center; align-items: center;
+  }
+  .multi-modal {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 24px;
+    max-width: 520px;
+    width: 90%;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+  }
+  .multi-modal-title { font-size: 16px; font-weight: 700; color: var(--text); margin-bottom: 4px; }
+  .multi-modal-msg { font-size: 13px; color: var(--text3); margin-bottom: 16px; }
+  .multi-modal-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px; }
+  .multi-btn {
+    background: rgba(255,255,255,0.03);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 18px 12px;
+    cursor: pointer;
+    color: var(--text);
+    transition: all 0.15s;
+    text-align: center;
+  }
+  .multi-btn:hover { border-color: var(--blue-hot); background: rgba(96, 165, 250, 0.08); transform: translateY(-1px); }
+  .multi-btn-emoji { font-size: 28px; margin-bottom: 6px; }
+  .multi-btn-label { font-weight: 700; font-size: 14px; }
+  .multi-btn-hint { font-size: 11px; color: var(--text3); margin-top: 4px; }
+  .multi-btn-saison:hover { border-color: #c4b5fd; background: rgba(168, 85, 247, 0.08); }
+  .multi-cancel {
+    width: 100%;
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 8px;
+    color: var(--text3);
+    cursor: pointer;
+    font-size: 12px;
+  }
+  .multi-cancel:hover { color: var(--text); border-color: var(--text3); }
+
   .dropdown-wrapper { position: relative; display: inline-block; }
   .dropdown-menu {
     position: absolute;
