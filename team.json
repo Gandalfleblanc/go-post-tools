@@ -17,6 +17,9 @@
         "settings",
         "log",
         "logs"
+      ],
+      "permissions": [
+        "torrent_admin"
       ]
     },
     "co-admin": {
