@@ -9,6 +9,7 @@ import (
 
 	"github.com/jlaffaye/ftp"
 
+	"go-post-tools/internal/nextcloud"
 	"go-post-tools/internal/seedbox"
 	"go-post-tools/internal/webdav"
 )
@@ -197,6 +198,14 @@ func TestModSeedbox(baseURL, user, password string) Result {
 		return fail(err)
 	}
 	return ok("Connexion WebDAV réussie (Seedbox Modérateur)")
+}
+
+// TestNextcloud : PROPFIND sur la racine WebDAV NextCloud (cert self-signed accepté).
+func TestNextcloud(baseURL, user, password string) Result {
+	if err := nextcloud.Ping(baseURL, user, password); err != nil {
+		return fail(err)
+	}
+	return ok("Connexion NextCloud réussie")
 }
 
 func TestUsenet(host string, port int) Result {

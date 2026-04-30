@@ -75,6 +75,13 @@ jobs:
           FTP_MOD_USER: ${{ secrets.FTP_MOD_USER }}
           FTP_MOD_PASSWORD: ${{ secrets.FTP_MOD_PASSWORD }}
           FTP_MOD_PATH: ${{ secrets.FTP_MOD_PATH }}
+          NEXTCLOUD_ADMIN_URL: ${{ secrets.NEXTCLOUD_ADMIN_URL }}
+          NEXTCLOUD_ADMIN_USER: ${{ secrets.NEXTCLOUD_ADMIN_USER }}
+          NEXTCLOUD_ADMIN_PASSWORD: ${{ secrets.NEXTCLOUD_ADMIN_PASSWORD }}
+          NEXTCLOUD_ADMIN_PATH: ${{ secrets.NEXTCLOUD_ADMIN_PATH }}
+          QBIT_ADMIN_URL: ${{ secrets.QBIT_ADMIN_URL }}
+          QBIT_ADMIN_USER: ${{ secrets.QBIT_ADMIN_USER }}
+          QBIT_ADMIN_PASSWORD: ${{ secrets.QBIT_ADMIN_PASSWORD }}
           TRACKER_URL: ${{ secrets.TRACKER_URL }}
         run: |
           wails build -platform darwin/${{ matrix.arch }} -ldflags "-s -w \
@@ -163,6 +170,13 @@ jobs:
           FTP_MOD_USER: ${{ secrets.FTP_MOD_USER }}
           FTP_MOD_PASSWORD: ${{ secrets.FTP_MOD_PASSWORD }}
           FTP_MOD_PATH: ${{ secrets.FTP_MOD_PATH }}
+          NEXTCLOUD_ADMIN_URL: ${{ secrets.NEXTCLOUD_ADMIN_URL }}
+          NEXTCLOUD_ADMIN_USER: ${{ secrets.NEXTCLOUD_ADMIN_USER }}
+          NEXTCLOUD_ADMIN_PASSWORD: ${{ secrets.NEXTCLOUD_ADMIN_PASSWORD }}
+          NEXTCLOUD_ADMIN_PATH: ${{ secrets.NEXTCLOUD_ADMIN_PATH }}
+          QBIT_ADMIN_URL: ${{ secrets.QBIT_ADMIN_URL }}
+          QBIT_ADMIN_USER: ${{ secrets.QBIT_ADMIN_USER }}
+          QBIT_ADMIN_PASSWORD: ${{ secrets.QBIT_ADMIN_PASSWORD }}
           TRACKER_URL: ${{ secrets.TRACKER_URL }}
         run: |
           wails build -platform linux/amd64 -tags webkit2_41 -ldflags "-s -w \
@@ -239,6 +253,13 @@ jobs:
           FTP_MOD_USER: ${{ secrets.FTP_MOD_USER }}
           FTP_MOD_PASSWORD: ${{ secrets.FTP_MOD_PASSWORD }}
           FTP_MOD_PATH: ${{ secrets.FTP_MOD_PATH }}
+          NEXTCLOUD_ADMIN_URL: ${{ secrets.NEXTCLOUD_ADMIN_URL }}
+          NEXTCLOUD_ADMIN_USER: ${{ secrets.NEXTCLOUD_ADMIN_USER }}
+          NEXTCLOUD_ADMIN_PASSWORD: ${{ secrets.NEXTCLOUD_ADMIN_PASSWORD }}
+          NEXTCLOUD_ADMIN_PATH: ${{ secrets.NEXTCLOUD_ADMIN_PATH }}
+          QBIT_ADMIN_URL: ${{ secrets.QBIT_ADMIN_URL }}
+          QBIT_ADMIN_USER: ${{ secrets.QBIT_ADMIN_USER }}
+          QBIT_ADMIN_PASSWORD: ${{ secrets.QBIT_ADMIN_PASSWORD }}
           TRACKER_URL: ${{ secrets.TRACKER_URL }}
         run: |
           wails build -platform windows/amd64 -nsis -ldflags "-s -w \

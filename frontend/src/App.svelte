@@ -1,6 +1,6 @@
 <script>
   import { onMount, onDestroy } from 'svelte'
-  import { GetConfig, SaveConfig, TestHydracker, TestTMDB, TestOneFichier, TestSendCm, TestFTP, TestSeedbox, TestQBit, TestModSeedbox, TestUsenet, TestLihdl, HasSeedboxSettingsPassword, SetSeedboxSettingsPassword, VerifySeedboxSettingsPassword, ClearSeedboxSettingsPassword } from '../wailsjs/go/main/App.js'
+  import { GetConfig, SaveConfig, TestHydracker, TestTMDB, TestOneFichier, TestSendCm, TestFTP, TestSeedbox, TestQBit, TestModSeedbox, TestNextcloud, TestUsenet, TestLihdl, HasSeedboxSettingsPassword, SetSeedboxSettingsPassword, VerifySeedboxSettingsPassword, ClearSeedboxSettingsPassword } from '../wailsjs/go/main/App.js'
   import { EventsOn, EventsOff } from '../wailsjs/runtime/runtime.js'
   import HydrackerTab from './HydrackerTab.svelte'
   import { logEntries, addLog, clearLogs } from './logs.js'
@@ -45,6 +45,7 @@
   let myBadge = ''
   let myColor = ''
   let myTabs = []
+  let myPermissions = []
 
   async function doLogin() {
     loginError = ''
@@ -78,12 +79,16 @@
     myBadge    = auth?.badge    || ''
     myColor    = auth?.color    || ''
     myTabs     = Array.isArray(auth?.tabs) ? auth.tabs : []
+    myPermissions = Array.isArray(auth?.permissions) ? auth.permissions : []
+    // Expose globalement pour que HydrackerTab puisse lire depuis Svelte context
+    if (typeof window !== 'undefined') window.__myPermissions = myPermissions
   }
 
   async function doLogout() {
     try { await Logout() } catch {}
     myUsername = ''; myRole = ''; myAvatar = ''; myTitle = ''
-    myBadge = ''; myColor = ''; myTabs = []
+    myBadge = ''; myColor = ''; myTabs = []; myPermissions = []
+    if (typeof window !== 'undefined') window.__myPermissions = []
     loginPseudo = ''; loginPassword = ''; loginError = ''
     authState = 'login'
   }
@@ -95,6 +100,7 @@
   let teamUsers = []                     // [{ pseudo, role, title }]
   let teamRoles = {}                     // { [key]: { badge, color, title, tabs: [] } }
   let teamOriginalJSON = ''              // pour détecter les changements
+  let lastSavedJSON = ''                 // snapshot du dernier "Générer team.json" pour le state ✅ sauvegardé
   let managerNewPasswords = {}           // { pseudo: newPass } — hash côté Go au Générer
 
   let selectedRole = ''
@@ -122,7 +128,14 @@
   ]
   const ROLE_EMOJIS = ['🥇','🥈','🥉','🔵','🟣','🎬','💎','🤝','🏠','⭐','🔥','⚡','👑','🛡','🎭','🎨','🚀']
 
-  $: managerDirty = managerOpen && JSON.stringify(currentManagerSnapshot()) !== teamOriginalJSON
+  // On référence teamRoles + teamUsers directement (pas via currentManagerSnapshot()),
+  // sinon Svelte ne tracke pas les deps à travers l'appel de fonction et le bloc
+  // ne re-run pas quand on toggle un tab/permission/user dans le Manager.
+  $: managerDirty = managerOpen && JSON.stringify({ roles: teamRoles, users: teamUsers }) !== teamOriginalJSON
+  // managerSaved = true tant que l'état actuel correspond exactement à ce qui a été
+  // généré la dernière fois (= JSON copié dans le presse-papier). Auto-clear si l'user
+  // continue à éditer après le "Générer team.json".
+  $: managerSaved = lastSavedJSON !== '' && JSON.stringify({ roles: teamRoles, users: teamUsers }) === lastSavedJSON
   $: managerOpen = activeTab === 'manager' && myRole === 'admin'
 
   function currentManagerSnapshot() {
@@ -155,6 +168,18 @@
     const nextTabs = has ? r.tabs.filter(x => x !== tabId) : [...(r.tabs || []), tabId]
     teamRoles = { ...teamRoles, [roleKey]: { ...r, tabs: nextTabs } }
   }
+  function manageTogglePermission(roleKey, perm) {
+    const r = teamRoles[roleKey]
+    if (!r) return
+    const cur = Array.isArray(r.permissions) ? r.permissions : []
+    const has = cur.includes(perm)
+    const nextPerms = has ? cur.filter(x => x !== perm) : [...cur, perm]
+    teamRoles = { ...teamRoles, [roleKey]: { ...r, permissions: nextPerms } }
+  }
+  // Liste des permissions custom configurables dans Manager
+  const ROLE_PERMISSIONS = [
+    { id: 'torrent_admin', label: '👑 Bouton Torrent ADMIN', help: 'Autorise l\'utilisation du workflow Torrent ADMIN (NextCloud + qBittorrent ADMIN)' },
+  ]
 
   function manageAddUser() {
     if (!newUserForm.pseudo || !newUserForm.password || !newUserForm.role) return
@@ -241,6 +266,8 @@
       outputJSON = json
       outputOpen = true
       try { await navigator.clipboard.writeText(json) } catch {}
+      // Snapshot l'état actuel pour activer l'indicateur "Modifications sauvegardées"
+      lastSavedJSON = JSON.stringify({ roles: teamRoles, users: teamUsers })
     } catch (e) {
       managerError = String(e?.message || e).replace(/^Error:\s*/, '')
     }
@@ -319,6 +346,8 @@
     private_seedbox_url: '', private_seedbox_user: '', private_seedbox_password: '', private_seedbox_label: '',
     private_qbit_url: '', private_qbit_user: '', private_qbit_password: '',
     qbit_url: '', qbit_user: '', qbit_password: '',
+    qbit_admin_url: '', qbit_admin_user: '', qbit_admin_password: '',
+    nextcloud_admin_url: '', nextcloud_admin_user: '', nextcloud_admin_password: '', nextcloud_admin_path: '/',
     mod_seedbox_url: '', mod_seedbox_user: '', mod_seedbox_password: '',
     ftp_mod_host: '', ftp_mod_port: 21, ftp_mod_user: '', ftp_mod_password: '', ftp_mod_path: '/',
     tracker_url: '', torrent_piece_size: 8388608,
@@ -3350,6 +3379,22 @@
                   </label>
                 {/each}
               </div>
+
+              <!-- Permissions custom (boutons/actions spécifiques) -->
+              <div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border)">
+                <div style="font-size:11px;color:var(--text3);margin-bottom:8px;text-transform:uppercase;letter-spacing:0.5px">🔓 Permissions spéciales</div>
+                <div class="mgr-role-tabs">
+                  {#each ROLE_PERMISSIONS as p}
+                    {@const enabled = Array.isArray(r.permissions) && r.permissions.includes(p.id)}
+                    <label class="mgr-toggle-row" title={p.help}>
+                      <span class="mgr-toggle-label">{p.label}</span>
+                      <input type="checkbox" checked={enabled}
+                        on:change={() => manageTogglePermission(selectedRole, p.id)} />
+                      <span class="mgr-slider" style="--active-color: {r.color}"></span>
+                    </label>
+                  {/each}
+                </div>
+              </div>
             </div>
           {:else}
             <div style="text-align:center;padding:40px;color:var(--text3)">
@@ -3358,8 +3403,19 @@
           {/if}
         {/if}
 
-        <!-- Sticky footer si modifs -->
-        {#if !managerLoading && managerDirty}
+        <!-- Sticky footer : vert si dernière modif a été générée+copiée, sinon orange si dirty -->
+        {#if !managerLoading && managerSaved}
+          <div class="mgr-footer mgr-footer-saved">
+            <div>
+              <span style="font-size:16px">✅</span>
+              <span style="color:#7ef0c0;font-weight:600">Modifications sauvegardées</span>
+              <span style="color:var(--text3);font-size:12px;margin-left:8px">— JSON copié dans le presse-papier, colle-le sur GitHub pour activer</span>
+            </div>
+            <div style="display:flex;gap:8px">
+              <button class="btn-test" on:click={manageGenerateAndCopy}>📋 Re-copier</button>
+            </div>
+          </div>
+        {:else if !managerLoading && managerDirty}
           <div class="mgr-footer">
             <div>
               <span style="font-size:16px">⚠</span>
@@ -3550,26 +3606,25 @@
 
           <!-- ===== Mon mot de passe ===== -->
           <div style="font-size:11px;color:var(--text3);margin:4px 0 8px;text-transform:uppercase;letter-spacing:0.5px">🔐 Mon compte</div>
-          <div class="section">
+          <div class="section section-locked">
             <div class="section-header">
-              <span>Changer mon mot de passe</span>
+              <span>🔒 Changer mon mot de passe (verrouillé team)</span>
             </div>
             <div style="color:var(--text3);font-size:12px;line-height:1.5;margin-bottom:10px">
               Génère un nouveau hash pour ton compte <b>{myUsername}</b> et produit un <code>team.json</code> complet à coller sur GitHub.
               Les autres users conservent leur mdp actuel.
             </div>
             <div class="field">
-              <label for="mypwd-new">Nouveau mot de passe</label>
-              <input id="mypwd-new" type="password" bind:value={changePwdValue} placeholder="Au moins 8 caractères recommandés" autocomplete="new-password" />
+              <label>Nouveau mot de passe</label>
+              <input type="password" value={changePwdValue} disabled readonly placeholder="••••••••" />
             </div>
             <div class="field">
-              <label for="mypwd-confirm">Confirmer</label>
-              <input id="mypwd-confirm" type="password" bind:value={changePwdConfirm} placeholder="Retaper le nouveau mot de passe" autocomplete="new-password" />
+              <label>Confirmer</label>
+              <input type="password" value={changePwdConfirm} disabled readonly placeholder="••••••••" />
             </div>
             <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:4px">
-              <button class="btn-save" on:click={doChangePassword}
-                disabled={!changePwdValue || changePwdValue !== changePwdConfirm || changePwdLoading}>
-                {changePwdLoading ? '…' : '🔒 Générer le team.json'}
+              <button class="btn-save" disabled>
+                🔒 Générer le team.json
               </button>
               {#if changePwdValue && changePwdConfirm && changePwdValue !== changePwdConfirm}
                 <span style="color:#ff9585;font-size:12px">⚠ Les mots de passe ne correspondent pas</span>
@@ -3814,69 +3869,64 @@
             </div>
           </div>
 
-          <!-- FTP RUTORRENT -->
-          <div class="section">
+          <!-- NextCloud ADMIN (upload MKV via WebDAV pour le workflow Torrent ADMIN) — verrouillé team -->
+          <div class="section section-locked">
             <div class="section-header">
-              <span>FTP Rutorrent</span>
-              <button class="btn-test" on:click={() => runTest('ftp', () => TestFTP(cfg.ftp_host, cfg.ftp_port, cfg.ftp_user, cfg.ftp_password))}>
-                {#if testLoading.ftp}…{:else}Tester{/if}
+              <span>🔒 NextCloud ADMIN (verrouillé team)</span>
+              <button class="btn-test" on:click={() => runTest('nextcloudadmin', () => TestNextcloud(cfg.nextcloud_admin_url, cfg.nextcloud_admin_user, cfg.nextcloud_admin_password))}>
+                {#if testLoading.nextcloudadmin}…{:else}Tester{/if}
               </button>
             </div>
-            {#if testResults.ftp}
-              <div class="test-result" class:ok={testResults.ftp.ok}>{testResults.ftp.message}</div>
+            {#if testResults.nextcloudadmin}
+              <div class="test-result" class:ok={testResults.nextcloudadmin.ok}>{testResults.nextcloudadmin.message}</div>
             {/if}
+            <div style="color:var(--text3);font-size:11px;margin-bottom:8px">
+              Upload du MKV via WebDAV (cert self-signed accepté). Le qBittorrent ADMIN partage le filesystem côté serveur.
+            </div>
+            <div class="field">
+              <label>URL NextCloud</label>
+              <input type="password" value={cfg.nextcloud_admin_url} disabled readonly />
+            </div>
             <div class="fields-grid">
               <div class="field">
-                <label>Hôte</label>
-                <input type="text" bind:value={cfg.ftp_host} placeholder="ftp.example.com" />
-              </div>
-              <div class="field">
-                <label>Port</label>
-                <input type="number" bind:value={cfg.ftp_port} />
-              </div>
-              <div class="field">
                 <label>Utilisateur</label>
-                <input type="text" bind:value={cfg.ftp_user} />
+                <input type="password" value={cfg.nextcloud_admin_user} disabled readonly />
               </div>
               <div class="field">
                 <label>Mot de passe</label>
-                <input type="password" bind:value={cfg.ftp_password} />
+                <input type="password" value={cfg.nextcloud_admin_password} disabled readonly />
               </div>
               <div class="field">
-                <label>Dossier distant</label>
-                <input type="text" bind:value={cfg.ftp_path} placeholder="/" />
+                <label>Path remote</label>
+                <input type="password" value={cfg.nextcloud_admin_path} disabled readonly />
               </div>
             </div>
           </div>
 
-          <!-- Seedbox -->
-          <div class="section">
+          <!-- qBittorrent ADMIN (seedbox team-shared, paire avec NextCloud ADMIN) — verrouillé team -->
+          <div class="section section-locked">
             <div class="section-header">
-              <span>Seedbox Rutorrent</span>
-              <button class="btn-test" on:click={() => runTest('seedbox', () => TestSeedbox(cfg.seedbox_url, cfg.seedbox_user, cfg.seedbox_password))}>
-                {#if testLoading.seedbox}…{:else}Tester{/if}
+              <span>🔒 Seedbox ADMIN — qBittorrent (verrouillé team)</span>
+              <button class="btn-test" on:click={() => runTest('qbitadmin', () => TestQBit(cfg.qbit_admin_url, cfg.qbit_admin_user, cfg.qbit_admin_password))}>
+                {#if testLoading.qbitadmin}…{:else}Tester{/if}
               </button>
             </div>
-            {#if testResults.seedbox}
-              <div class="test-result" class:ok={testResults.seedbox.ok}>{testResults.seedbox.message}</div>
+            {#if testResults.qbitadmin}
+              <div class="test-result" class:ok={testResults.qbitadmin.ok}>{testResults.qbitadmin.message}</div>
             {/if}
             <div class="field">
-              <label for="seedbox-url">URL ruTorrent</label>
-              <input id="seedbox-url" type="text" bind:value={cfg.seedbox_url} placeholder="https://my-seedbox.example/seedbox-XXXX/rutorrent/" />
+              <label>URL qBittorrent Web UI</label>
+              <input type="password" value={cfg.qbit_admin_url} disabled readonly />
             </div>
             <div class="fields-grid">
               <div class="field">
                 <label>Utilisateur</label>
-                <input type="text" bind:value={cfg.seedbox_user} />
+                <input type="password" value={cfg.qbit_admin_user} disabled readonly />
               </div>
               <div class="field">
                 <label>Mot de passe</label>
-                <input type="password" bind:value={cfg.seedbox_password} />
+                <input type="password" value={cfg.qbit_admin_password} disabled readonly />
               </div>
-            </div>
-            <div class="field">
-              <label for="seedbox-label">Label (optionnel)</label>
-              <input id="seedbox-label" type="text" bind:value={cfg.seedbox_label} placeholder="hydracker" />
             </div>
           </div>
 
@@ -5726,6 +5776,11 @@
     flex-wrap: wrap; gap: 12px;
     box-shadow: 0 -10px 30px -10px rgba(0,0,0,0.5);
     backdrop-filter: blur(10px);
+  }
+  /* Variant : modifications sauvegardées (générées + copiées) */
+  .mgr-footer-saved {
+    background: rgba(34, 197, 94, 0.08);
+    border-color: rgba(126, 240, 192, 0.4);
   }
 
   /* Modals */

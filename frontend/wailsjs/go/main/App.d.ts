@@ -205,6 +205,8 @@ export function TestLihdl(arg1:string,arg2:string,arg3:string):Promise<tester.Re
 
 export function TestModSeedbox(arg1:string,arg2:string,arg3:string):Promise<tester.Result>;
 
+export function TestNextcloud(arg1:string,arg2:string,arg3:string):Promise<tester.Result>;
+
 export function TestNexum():Promise<string>;
 
 export function TestOneFichier(arg1:string):Promise<tester.Result>;

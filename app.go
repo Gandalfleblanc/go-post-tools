@@ -29,6 +29,7 @@ import (
 	"go-post-tools/internal/ftpup"
 	"go-post-tools/internal/history"
 	"go-post-tools/internal/lihdl"
+	"go-post-tools/internal/nextcloud"
 	"go-post-tools/internal/nexum"
 	"go-post-tools/internal/nyuu"
 	"go-post-tools/internal/rutorrent"
@@ -50,7 +51,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-const Version = "5.2.12"
+const Version = "5.3.0"
 
 type App struct {
 	ctx         context.Context
@@ -844,6 +845,10 @@ func (a *App) TestModSeedbox(url, user, password string) tester.Result {
 	return tester.TestModSeedbox(url, user, password)
 }
 
+func (a *App) TestNextcloud(url, user, password string) tester.Result {
+	return tester.TestNextcloud(url, user, password)
+}
+
 func (a *App) TestUsenet(host string, port int) tester.Result {
 	return tester.TestUsenet(host, port)
 }
@@ -1180,10 +1185,11 @@ type TeamUser struct {
 
 // RoleDef : définition d'un rôle (badge, couleur, tabs visibles).
 type RoleDef struct {
-	Badge string   `json:"badge"`           // emoji affiché (🥇, 🥈, …)
-	Color string   `json:"color"`           // couleur CSS (#fbbf24, …)
-	Title string   `json:"title,omitempty"` // libellé défaut si pas de title user
-	Tabs  []string `json:"tabs"`            // liste des IDs de tabs visibles
+	Badge       string   `json:"badge"`                 // emoji affiché (🥇, 🥈, …)
+	Color       string   `json:"color"`                 // couleur CSS (#fbbf24, …)
+	Title       string   `json:"title,omitempty"`       // libellé défaut si pas de title user
+	Tabs        []string `json:"tabs"`                  // liste des IDs de tabs visibles
+	Permissions []string `json:"permissions,omitempty"` // permissions custom (ex: "torrent_admin")
 }
 
 type teamList struct {
@@ -1196,7 +1202,8 @@ type teamList struct {
 func defaultRoles() map[string]RoleDef {
 	return map[string]RoleDef{
 		"admin": {Badge: "🥇", Color: "#fbbf24", Title: "Admin",
-			Tabs: []string{"hydracker", "fiches", "check", "reseed", "myuploads", "history", "logs", "manager", "settings"}},
+			Tabs:        []string{"hydracker", "fiches", "check", "reseed", "myuploads", "history", "logs", "manager", "settings"},
+			Permissions: []string{"torrent_admin"}},
 		"modo": {Badge: "🥈", Color: "#cbd5e1", Title: "Modo",
 			Tabs: []string{"hydracker", "fiches", "check", "reseed", "myuploads", "history", "logs", "settings"}},
 		"team": {Badge: "🥉", Color: "#cd7f32", Title: "Team",
@@ -1208,13 +1215,14 @@ func defaultRoles() map[string]RoleDef {
 
 // AuthResult : résultat de LoginUser / GetCurrentUser.
 type AuthResult struct {
-	Username string   `json:"username"`
-	Role     string   `json:"role"`
-	Title    string   `json:"title"`
-	Avatar   string   `json:"avatar,omitempty"`
-	Badge    string   `json:"badge,omitempty"` // emoji du rôle (résolu depuis roles)
-	Color    string   `json:"color,omitempty"` // couleur CSS du rôle
-	Tabs     []string `json:"tabs,omitempty"`  // tabs visibles pour ce rôle
+	Username    string   `json:"username"`
+	Role        string   `json:"role"`
+	Title       string   `json:"title"`
+	Avatar      string   `json:"avatar,omitempty"`
+	Badge       string   `json:"badge,omitempty"`       // emoji du rôle (résolu depuis roles)
+	Color       string   `json:"color,omitempty"`       // couleur CSS du rôle
+	Tabs        []string `json:"tabs,omitempty"`        // tabs visibles pour ce rôle
+	Permissions []string `json:"permissions,omitempty"` // permissions custom (ex: "torrent_admin")
 }
 
 // TeamConfig : renvoyé à l'UI Manager (admin only).
@@ -1361,12 +1369,13 @@ func (a *App) LoginUser(pseudo, password string) (*AuthResult, error) {
 			title = def.Title
 		}
 		res := &AuthResult{
-			Username: u.Pseudo,
-			Role:     role,
-			Title:    title,
-			Badge:    def.Badge,
-			Color:    def.Color,
-			Tabs:     def.Tabs,
+			Username:    u.Pseudo,
+			Role:        role,
+			Title:       title,
+			Badge:       def.Badge,
+			Color:       def.Color,
+			Tabs:        def.Tabs,
+			Permissions: def.Permissions,
 		}
 		a.sessionMu.Lock()
 		a.currentUser = res
@@ -1409,12 +1418,13 @@ func (a *App) TryAutoLogin() (*AuthResult, error) {
 			title = def.Title
 		}
 		res := &AuthResult{
-			Username: u.Pseudo,
-			Role:     role,
-			Title:    title,
-			Badge:    def.Badge,
-			Color:    def.Color,
-			Tabs:     def.Tabs,
+			Username:    u.Pseudo,
+			Role:        role,
+			Title:       title,
+			Badge:       def.Badge,
+			Color:       def.Color,
+			Tabs:        def.Tabs,
+			Permissions: def.Permissions,
 		}
 		a.sessionMu.Lock()
 		a.currentUser = res
@@ -1986,10 +1996,10 @@ func (a *App) ReseedExecute(torrentPath, mkvPath string) error {
 // --- Seedbox abstraction : choix explicite ou auto qBit vs ruTorrent ---
 //
 // seedboxType :
-//   - "admin"  : ruTorrent team-shared Gandalf (SeedboxURL)
-//   - "prive"  : ruTorrent perso de l'user (PrivateSeedboxURL)
-//   - "modo"   : qBittorrent team-shared (QBitURL)
-//   - ""       : auto (qBit prioritaire si configuré, sinon ruTorrent admin)
+//   - "admin"  : qBittorrent ADMIN team-shared (QBitAdminURL) — paire avec NextCloud
+//   - "prive"  : ruTorrent ou qBittorrent perso de l'user (PrivateSeedboxURL/PrivateQBitURL)
+//   - "modo"   : qBittorrent MODO team-shared (QBitURL) — paire avec FTP MODÉRATEUR
+//   - ""       : auto = admin
 //
 // pushTorrent envoie un .torrent au seedbox cible. onProgress peut être nil.
 func (a *App) pushTorrent(ctx context.Context, torrentPath, seedboxType string, onProgress func(seedbox.Progress)) (string, error) {
@@ -2007,9 +2017,7 @@ func (a *App) pushTorrent(ctx context.Context, torrentPath, seedboxType string, 
 		}
 		return "", fmt.Errorf("seedbox Privée non configurée (Réglages : ruTorrent ou qBittorrent)")
 	}
-	useQBit := seedboxType == "modo" || (seedboxType == "" && a.cfg.QBitURL != "")
-	useRuTorrent := seedboxType == "admin" || (seedboxType == "" && a.cfg.QBitURL == "" && a.cfg.SeedboxURL != "")
-	if useQBit {
+	if seedboxType == "modo" {
 		if a.cfg.QBitURL == "" {
 			return "", fmt.Errorf("seedbox MODO (qBittorrent) non configurée")
 		}
@@ -2019,13 +2027,15 @@ func (a *App) pushTorrent(ctx context.Context, torrentPath, seedboxType string, 
 			}
 		})
 	}
-	if useRuTorrent {
-		if a.cfg.SeedboxURL == "" {
-			return "", fmt.Errorf("seedbox ADMIN (ruTorrent) non configurée")
-		}
-		return seedbox.Upload(ctx, a.cfg.SeedboxURL, a.cfg.SeedboxUser, a.cfg.SeedboxPassword, a.cfg.SeedboxLabel, torrentPath, onProgress)
+	// admin (ou "" → admin par défaut)
+	if a.cfg.QBitAdminURL == "" {
+		return "", fmt.Errorf("seedbox ADMIN (qBittorrent) non configurée")
 	}
-	return "", fmt.Errorf("aucune seedbox configurée (Réglages : ruTorrent ou qBittorrent)")
+	return qbittorrent.Upload(ctx, a.cfg.QBitAdminURL, a.cfg.QBitAdminUser, a.cfg.QBitAdminPassword, a.cfg.SeedboxLabel, torrentPath, func(p qbittorrent.Progress) {
+		if onProgress != nil {
+			onProgress(seedbox.Progress{Percent: p.Percent, SpeedMB: p.SpeedMB})
+		}
+	})
 }
 
 // recheckTorrent force un recheck côté seedbox cible.
@@ -2039,20 +2049,22 @@ func (a *App) recheckTorrent(hash, seedboxType string) error {
 		}
 		return fmt.Errorf("seedbox Privée non configurée")
 	}
-	useQBit := seedboxType == "modo" || (seedboxType == "" && a.cfg.QBitURL != "")
-	useRuTorrent := seedboxType == "admin" || (seedboxType == "" && a.cfg.QBitURL == "" && a.cfg.SeedboxURL != "")
-	if useQBit && a.cfg.QBitURL != "" {
+	if seedboxType == "modo" {
+		if a.cfg.QBitURL == "" {
+			return fmt.Errorf("seedbox MODO non configurée")
+		}
 		return qbittorrent.Recheck(a.cfg.QBitURL, a.cfg.QBitUser, a.cfg.QBitPassword, hash)
 	}
-	if useRuTorrent && a.cfg.SeedboxURL != "" {
-		return rutorrent.Recheck(a.cfg.SeedboxURL, a.cfg.SeedboxUser, a.cfg.SeedboxPassword, hash)
+	// admin (ou "")
+	if a.cfg.QBitAdminURL == "" {
+		return fmt.Errorf("seedbox ADMIN non configurée")
 	}
-	return fmt.Errorf("seedbox %q non configurée", seedboxType)
+	return qbittorrent.Recheck(a.cfg.QBitAdminURL, a.cfg.QBitAdminUser, a.cfg.QBitAdminPassword, hash)
 }
 
-// seedboxConfigured indique si au moins une seedbox (ruTorrent ou qBit) est configurée.
+// seedboxConfigured indique si au moins une seedbox team-shared (qBit ADMIN ou MODO) est configurée.
 func (a *App) seedboxConfigured() bool {
-	return a.cfg.QBitURL != "" || a.cfg.SeedboxURL != ""
+	return a.cfg.QBitAdminURL != "" || a.cfg.QBitURL != ""
 }
 
 // findExistingTorrent cherche un torrent existant sur Hydracker qui matche
@@ -3303,11 +3315,11 @@ func (a *App) PostTorrentWorkflow(titleID, qualite int, langues, subs []string, 
 			return nil, fmt.Errorf("qBit Modérateur non configuré (Réglages)")
 		}
 	default: // admin
-		if a.cfg.FTPHost == "" || a.cfg.FTPUser == "" {
-			return nil, fmt.Errorf("FTP ADMIN non configuré — renseignez les Settings")
+		if a.cfg.NextcloudAdminURL == "" || a.cfg.NextcloudAdminUser == "" {
+			return nil, fmt.Errorf("NextCloud ADMIN non configuré — credentials manquants (build secrets)")
 		}
-		if a.cfg.SeedboxURL == "" {
-			return nil, fmt.Errorf("seedbox ADMIN non configurée — renseignez les Settings")
+		if a.cfg.QBitAdminURL == "" {
+			return nil, fmt.Errorf("qBittorrent ADMIN non configuré — credentials manquants (build secrets)")
 		}
 	}
 	if a.cfg.TrackerURL == "" {
@@ -3322,36 +3334,45 @@ func (a *App) PostTorrentWorkflow(titleID, qualite int, langues, subs []string, 
 		wailsruntime.EventsEmit(a.ctx, "torrent:status", map[string]interface{}{"stage": stage, "msg": msg})
 	}
 
-	// 1. Upload MKV vers la seedbox cible via FTP
+	// 1. Upload MKV vers la seedbox cible
 	//    - MODO  → FTP MODÉRATEUR (cfg.FTPMod*) — seedbox partagée des modos
 	//    - PRIVE → FTP perso de l'user (cfg.PrivateFTP*) — saisi en Réglages
-	//    - ADMIN → FTP ADMIN (cfg.FTP*) — seedbox team-shared baked
-	var ftpHost, ftpUser, ftpPass, ftpPath string
-	var ftpPort int
-	switch seedboxType {
-	case "modo":
-		if a.cfg.FTPModHost == "" {
-			return nil, fmt.Errorf("FTP Modérateur non configuré (Réglages)")
+	//    - ADMIN → NextCloud ADMIN via WebDAV (cfg.NextcloudAdmin*) — team-shared
+	var remoteName string
+	var uploadErr error
+	if seedboxType == "admin" || seedboxType == "" {
+		emit("ftp", "Upload NextCloud ADMIN…")
+		remoteName, uploadErr = nextcloud.Upload(a.workContext(), a.cfg.NextcloudAdminURL, a.cfg.NextcloudAdminUser, a.cfg.NextcloudAdminPassword, a.cfg.NextcloudAdminPath, mkvPath, func(p nextcloud.Progress) {
+			wailsruntime.EventsEmit(a.ctx, "torrent:ftp", p)
+		})
+		if uploadErr != nil {
+			return nil, fmt.Errorf("nextcloud: %w", uploadErr)
 		}
-		ftpHost, ftpPort, ftpUser, ftpPass, ftpPath = a.cfg.FTPModHost, a.cfg.FTPModPort, a.cfg.FTPModUser, a.cfg.FTPModPassword, a.cfg.FTPModPath
-		emit("ftp", "Upload FTP Modérateur…")
-	case "prive":
-		if a.cfg.PrivateFTPHost == "" {
-			return nil, fmt.Errorf("FTP Privé non configuré (Réglages)")
+		emit("ftp_done", fmt.Sprintf("NextCloud OK : %s", remoteName))
+	} else {
+		var ftpHost, ftpUser, ftpPass, ftpPath string
+		var ftpPort int
+		if seedboxType == "modo" {
+			if a.cfg.FTPModHost == "" {
+				return nil, fmt.Errorf("FTP Modérateur non configuré (Réglages)")
+			}
+			ftpHost, ftpPort, ftpUser, ftpPass, ftpPath = a.cfg.FTPModHost, a.cfg.FTPModPort, a.cfg.FTPModUser, a.cfg.FTPModPassword, a.cfg.FTPModPath
+			emit("ftp", "Upload FTP Modérateur…")
+		} else { // prive
+			if a.cfg.PrivateFTPHost == "" {
+				return nil, fmt.Errorf("FTP Privé non configuré (Réglages)")
+			}
+			ftpHost, ftpPort, ftpUser, ftpPass, ftpPath = a.cfg.PrivateFTPHost, a.cfg.PrivateFTPPort, a.cfg.PrivateFTPUser, a.cfg.PrivateFTPPassword, a.cfg.PrivateFTPPath
+			emit("ftp", "Upload FTP Privé…")
 		}
-		ftpHost, ftpPort, ftpUser, ftpPass, ftpPath = a.cfg.PrivateFTPHost, a.cfg.PrivateFTPPort, a.cfg.PrivateFTPUser, a.cfg.PrivateFTPPassword, a.cfg.PrivateFTPPath
-		emit("ftp", "Upload FTP Privé…")
-	default: // "admin" ou ""
-		ftpHost, ftpPort, ftpUser, ftpPass, ftpPath = a.cfg.FTPHost, a.cfg.FTPPort, a.cfg.FTPUser, a.cfg.FTPPassword, a.cfg.FTPPath
-		emit("ftp", "Upload FTP…")
+		remoteName, uploadErr = ftpup.Upload(a.workContext(), ftpHost, ftpPort, ftpUser, ftpPass, ftpPath, mkvPath, func(p ftpup.Progress) {
+			wailsruntime.EventsEmit(a.ctx, "torrent:ftp", p)
+		})
+		if uploadErr != nil {
+			return nil, fmt.Errorf("ftp: %w", uploadErr)
+		}
+		emit("ftp_done", fmt.Sprintf("FTP OK : %s", remoteName))
 	}
-	remoteName, err := ftpup.Upload(a.workContext(), ftpHost, ftpPort, ftpUser, ftpPass, ftpPath, mkvPath, func(p ftpup.Progress) {
-		wailsruntime.EventsEmit(a.ctx, "torrent:ftp", p)
-	})
-	if err != nil {
-		return nil, fmt.Errorf("ftp: %w", err)
-	}
-	emit("ftp_done", fmt.Sprintf("FTP OK : %s", remoteName))
 
 	// 2. Créer le .torrent
 	ext := filepath.Ext(mkvPath)

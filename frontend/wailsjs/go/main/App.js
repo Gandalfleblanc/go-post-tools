@@ -394,6 +394,10 @@ export function TestModSeedbox(arg1, arg2, arg3) {
   return window['go']['main']['App']['TestModSeedbox'](arg1, arg2, arg3);
 }
 
+export function TestNextcloud(arg1, arg2, arg3) {
+  return window['go']['main']['App']['TestNextcloud'](arg1, arg2, arg3);
+}
+
 export function TestNexum() {
   return window['go']['main']['App']['TestNexum']();
 }
