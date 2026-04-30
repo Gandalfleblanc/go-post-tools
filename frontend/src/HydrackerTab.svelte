@@ -19,6 +19,7 @@
   let selectedTMDB = null
   let tmdbSearchQuery = ''
   let tmdbSearchId = ''
+  let tmdbSearchType = 'movie'  // 'movie' | 'tv' — toggle pour la recherche manuelle
   let tmdbSearchLoading = false
 
   // Poster TMDB
@@ -34,6 +35,11 @@
   let selectedHydracker = null
   let hydrackerNotFound = false      // fiche introuvable après recherche auto
   let hydrackerManualId = ''         // saisie manuelle de l'ID Hydracker
+  let manualTmdbIdEdit = ''          // saisie manuelle TMDB ID dans la card "introuvable"
+  let tmdbReloadLoading = false      // spinner du bouton 🔄 reload TMDB
+  // Sync l'input avec le selectedTMDB courant pour éviter d'afficher l'ID
+  // d'un précédent post quand on bascule de fichier.
+  $: manualTmdbIdEdit = selectedTMDB?.id ? String(selectedTMDB.id) : manualTmdbIdEdit
   let hydrackerManualLoading = false
 
   // Hydracker post fields
@@ -910,15 +916,39 @@
     tmdbAmbiguous = false
     try {
       if (tmdbSearchId) {
-        const movie = await TMDBGetByID(parseInt(tmdbSearchId), 'movie')
+        const movie = await TMDBGetByID(parseInt(tmdbSearchId), tmdbSearchType)
+        if (movie) movie.media_type = tmdbSearchType
         tmdbResults = movie ? [movie] : []
       } else if (tmdbSearchQuery) {
-        tmdbResults = await TMDBSearch(tmdbSearchQuery) || []
+        const all = await TMDBSearch(tmdbSearchQuery) || []
+        // Filtre par type sélectionné (ignore les résultats sans media_type connu)
+        tmdbResults = all.filter(r => !r.media_type || r.media_type === tmdbSearchType)
       }
       if (tmdbResults.length === 1) selectTMDB(tmdbResults[0])
       else if (tmdbResults.length > 1) tmdbAmbiguous = true
     } catch(e) { console.error(e) }
     tmdbSearchLoading = false
+  }
+
+  // Re-fetch TMDB depuis l'ID édité dans la card "Fiche Hydracker introuvable"
+  // puis re-déclenche la chaîne selectTMDB → recherche Hydracker auto.
+  async function refreshTmdbFromManual() {
+    const id = parseInt(manualTmdbIdEdit)
+    if (!id || id <= 0) return
+    tmdbReloadLoading = true
+    try {
+      const mediaType = selectedTMDB?.media_type || 'movie'
+      const movie = await TMDBGetByID(id, mediaType)
+      if (movie) {
+        movie.media_type = mediaType
+        await selectTMDB(movie)
+      } else {
+        addLog('TMDB', `✗ ID ${id} introuvable côté TMDB (type ${mediaType})`)
+      }
+    } catch(e) {
+      addLog('TMDB', `✗ reload ID ${id}: ${e}`)
+    }
+    tmdbReloadLoading = false
   }
 
   async function selectTMDB(movie) {
@@ -1331,11 +1361,16 @@
       {:else if hydrackerNotFound && selectedTMDB}
         <div class="hyd-create-box">
           <div class="hyd-create-title">⚠ Fiche Hydracker introuvable</div>
-          <div class="hyd-create-hint">Créez-la sur Hydracker Admin avec cet ID TMDB :</div>
+          <div class="hyd-create-hint">ID TMDB (modifiable si auto-detect erroné) :</div>
           <div class="hyd-tmdb-url-row">
-            <span class="hyd-tmdb-url">{selectedTMDB.id}</span>
-            <button class="btn-copy" on:click={() => navigator.clipboard.writeText(String(selectedTMDB.id))}>📋</button>
+            <input type="number" class="hyd-tmdb-input" bind:value={manualTmdbIdEdit}
+              on:keydown={e => e.key === 'Enter' && refreshTmdbFromManual()} />
+            <button class="btn-copy" on:click={() => navigator.clipboard.writeText(String(manualTmdbIdEdit || selectedTMDB.id))}>📋</button>
+            <button class="btn-copy" title="Mettre à jour la fiche TMDB depuis cet ID" on:click={refreshTmdbFromManual} disabled={tmdbReloadLoading}>
+              {tmdbReloadLoading ? '…' : '🔄'}
+            </button>
           </div>
+          <div class="hyd-create-hint" style="margin-top:8px">Puis créez-la sur Hydracker Admin avec cet ID TMDB :</div>
           <button class="btn-open-admin" on:click={() => OpenHydrackerAdmin()}>
             Ouvrir Hydracker Admin
           </button>
@@ -1496,6 +1531,10 @@
         <div class="search-section">
           <div class="search-label">🔍 Recherche TMDB</div>
           <div class="search-row">
+            <div class="tmdb-type-toggle">
+              <button type="button" class:active={tmdbSearchType === 'movie'} on:click={() => tmdbSearchType = 'movie'}>🎬 Film</button>
+              <button type="button" class:active={tmdbSearchType === 'tv'} on:click={() => tmdbSearchType = 'tv'}>📺 Série</button>
+            </div>
             <input type="text" bind:value={tmdbSearchQuery} placeholder="Nom du film/série"
               on:keydown={e => e.key === 'Enter' && manualTMDBSearch()} />
             <input type="text" bind:value={tmdbSearchId} placeholder="ID TMDB" style="width:90px;flex:none"
@@ -2200,6 +2239,32 @@
   .btn-search:hover:not(:disabled) { background: var(--grad-primary-hover); filter: brightness(1.05); }
   .btn-search:disabled { opacity: 0.5; cursor: default; box-shadow: none; }
 
+  .tmdb-type-toggle {
+    display: inline-flex;
+    background: rgba(255,255,255,0.04);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 2px;
+    gap: 2px;
+    flex: none;
+  }
+  .tmdb-type-toggle button {
+    background: transparent;
+    border: none;
+    color: var(--text3);
+    padding: 4px 10px;
+    font-size: 12px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .tmdb-type-toggle button:hover { color: var(--text); }
+  .tmdb-type-toggle button.active {
+    background: rgba(96, 165, 250, 0.15);
+    color: #93c5fd;
+    font-weight: 600;
+  }
+
   .hydracker-results { margin-top: 10px; display: flex; flex-direction: column; gap: 4px; max-height: 200px; overflow-y: auto; }
   .hydracker-item {
     display: flex; align-items: center; gap: 10px;
@@ -2255,6 +2320,18 @@
     border-radius: 6px; padding: 6px 9px;
   }
   .hyd-tmdb-url { font-size: 11px; color: var(--blue-hot); word-break: break-all; flex: 1; }
+  .hyd-tmdb-input {
+    flex: 1;
+    background: rgba(255,255,255,0.05);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--blue-hot);
+    font-size: 13px;
+    font-weight: 600;
+    padding: 6px 10px;
+    font-family: ui-monospace, monospace;
+  }
+  .hyd-tmdb-input:focus { outline: none; border-color: var(--blue-hot); }
   .btn-copy {
     background: rgba(255,255,255,0.04);
     border: 1px solid var(--border);

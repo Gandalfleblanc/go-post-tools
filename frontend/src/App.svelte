@@ -3599,22 +3599,11 @@
           <div class="section section-locked">
             <div class="section-header">
               <span>🔒 Hydracker (verrouillé team)</span>
-              <button class="btn-test" on:click={() => runTest('hydracker', () => TestHydracker(cfg.hydracker_base_url, cfg.hydracker_token))}>
-                {#if testLoading.hydracker}…{:else}Tester{/if}
-              </button>
             </div>
-            {#if testResults.hydracker}
-              <div class="test-result" class:ok={testResults.hydracker.ok}>{testResults.hydracker.message}</div>
-            {/if}
             <div class="field">
               <label>URL de base</label>
               <input type="password" value={cfg.hydracker_base_url} disabled readonly />
-              <div class="field-hint">URL définie au build — non modifiable.</div>
-            </div>
-            <div class="field token-unlocked">
-              <label>Token d'accès <span style="color:#7ef0c0;font-size:10px;font-weight:600">🔓 perso — éditable</span></label>
-              <input type="password" bind:value={cfg.hydracker_token} placeholder="Bearer token" />
-              <div class="field-hint">Chaque user met son propre token Hydracker.</div>
+              <div class="field-hint">URL définie au build — non modifiable. Token perso → carte "Hydracker" plus bas.</div>
             </div>
           </div>
 
@@ -3645,12 +3634,42 @@
             <div class="field">
               <label>Index de recherche TEAM</label>
               <input type="password" value={cfg.lihdl_base_url} disabled readonly />
-              <div class="field-hint">Dossier LiHDL team-shared — verrouillé par la team.</div>
+              <div class="field-hint">Dossier LiHDL team-shared — verrouillé par la team. Clé perso TMDB → carte "TMDB" plus bas.</div>
             </div>
+          </div>
+
+          <!-- Cartes éditables : clés perso utilisateur (TMDB + Hydracker) -->
+          <div class="section">
+            <div class="section-header">
+              <span>TMDB</span>
+              <button class="btn-test" on:click={() => runTest('tmdb', () => TestTMDB(cfg.tmdb_api_key))}>
+                {#if testLoading.tmdb}…{:else}Tester{/if}
+              </button>
+            </div>
+            {#if testResults.tmdb}
+              <div class="test-result" class:ok={testResults.tmdb.ok}>{testResults.tmdb.message}</div>
+            {/if}
             <div class="field">
-              <label>Clé API TMDB (fallback)</label>
-              <input type="password" value={cfg.tmdb_api_key} disabled readonly placeholder="— non configurée —" />
-              <div class="field-hint">Non utilisée tant que le proxy fonctionne. Imposée par la team.</div>
+              <label>Clé API TMDB</label>
+              <input type="password" bind:value={cfg.tmdb_api_key} placeholder="API key" />
+              <div class="field-hint">Fallback si le proxy team est down. Récupère ta clé sur themoviedb.org → Settings → API.</div>
+            </div>
+          </div>
+
+          <div class="section">
+            <div class="section-header">
+              <span>Hydracker</span>
+              <button class="btn-test" on:click={() => runTest('hydracker', () => TestHydracker(cfg.hydracker_base_url, cfg.hydracker_token))}>
+                {#if testLoading.hydracker}…{:else}Tester{/if}
+              </button>
+            </div>
+            {#if testResults.hydracker}
+              <div class="test-result" class:ok={testResults.hydracker.ok}>{testResults.hydracker.message}</div>
+            {/if}
+            <div class="field">
+              <label>Token d'accès</label>
+              <input type="password" bind:value={cfg.hydracker_token} placeholder="Bearer token" />
+              <div class="field-hint">Chaque user met son propre token Hydracker (récupérable depuis ton profil Hydracker).</div>
             </div>
           </div>
 
