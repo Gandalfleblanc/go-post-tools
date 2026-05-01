@@ -6,7 +6,7 @@
   import { logEntries, addLog, clearLogs } from './logs.js'
   import logo from './assets/logo.png'
   import loginLogo from './assets/login-logo.png'
-  import { ListCheckTorrents, ReseedFromLihdl, ReseedPrepare, ReseedExecute, SelectAnyTorrentFile, SelectMkvFile, GetVersion, StartWatchFolder, StopWatchFolder, IsWatching, CheckForUpdate, OpenBrowser, HistoryList, HistoryDelete, HistoryStats, DownloadUpdate, HasLihdlSettingsPassword, SetLihdlSettingsPassword, VerifyLihdlSettingsPassword, ClearLihdlSettingsPassword, IsLihdlPasswordManaged, IsHydrackerURLManaged, GetEffectiveHydrackerURL, FindHydrackerSources, FicheGetContent, FicheGetNfo, GetDDLFilename, GetUploaderStats, LoginUser, Logout, GetCurrentUser, TryAutoLogin, HashPassword, GetTeamConfig, BuildTeamJSON, FetchHydrackerAvatar, ChangeMyPassword, GetNzbFilenames, DeleteSeedboxByHash, MediaSearch, HydrackerSearch, TMDBGetByImdbID, TMDBGetProviders, HydrackerGetByID, HydrackerGetByTmdbID, DownloadToDownloads, AutoReseedFromHydracker, AutoReseedDDLFromHydracker, AutoReseedFullFromTorrent, ListReseedRequests, ListMyLiens, ListMyTorrents, DeleteMyLien, DeleteMyTorrent, DeleteMyNzb, DeleteTorrentAndFTP, ListSeedboxHashes, GetNexumIndex, TestNexum, UpdateMyLien, UpdateMyTorrent, GetMetaQualities, ListTitlesSorted, GetUserProfile, ParseFilename, Notify } from '../wailsjs/go/main/App.js'
+  import { ListCheckTorrents, ReseedFromLihdl, ReseedPrepare, ReseedExecute, SelectAnyTorrentFile, SelectMkvFile, GetVersion, StartWatchFolder, StopWatchFolder, IsWatching, CheckForUpdate, OpenBrowser, HistoryList, HistoryDelete, HistoryStats, DownloadUpdate, HasLihdlSettingsPassword, SetLihdlSettingsPassword, VerifyLihdlSettingsPassword, ClearLihdlSettingsPassword, IsLihdlPasswordManaged, IsHydrackerURLManaged, GetEffectiveHydrackerURL, FindHydrackerSources, FicheGetContent, FicheGetNfo, GetDDLFilename, GetUploaderStats, LoginUser, Logout, GetCurrentUser, TryAutoLogin, HashPassword, GetTeamConfig, BuildTeamJSON, FetchHydrackerAvatar, ChangeMyPassword, GetNzbFilenames, DeleteSeedboxByHash, MediaSearch, HydrackerSearch, TMDBGetByImdbID, TMDBGetProviders, HydrackerGetByID, HydrackerGetByTmdbID, HydrackerGetLienByID, HydrackerGetLienDetailByID, DownloadToDownloads, AutoReseedFromHydracker, AutoReseedDDLFromHydracker, AutoReseedFullFromTorrent, ListReseedRequests, ListMyLiens, ListMyTorrents, DeleteMyLien, DeleteMyTorrent, DeleteMyNzb, DeleteTorrentAndFTP, ListSeedboxHashes, GetNexumIndex, TestNexum, UpdateMyLien, UpdateMyTorrent, GetMetaQualities, ListTitlesSorted, GetUserProfile, ParseFilename, Notify } from '../wailsjs/go/main/App.js'
 
   // --- Tabs (réorganisés par workflow, 8 onglets principaux) ---
   const TABS = [
@@ -868,10 +868,38 @@
     processDDLQueue()
   }
   // Auto-résolution batch dès qu'on bascule sur l'onglet "Liens DDL" d'une fiche.
-  // Limité à 1fichier pour l'instant. Les autres hosts restent affichés sans nom.
+  // L'API liste /content/liens ne renvoie PAS le champ "lien" — on fetch chaque
+  // détail via HydrackerGetLienByID pour récupérer l'URL, puis résolution 1Fichier
+  // pour avoir le filename.
   $: if (fichesContentTab === 'liens' && fichesContent?.liens?.liens?.length) {
     for (const l of fichesContent.liens.liens) {
-      if (l.lien && l.lien.includes('1fichier.com')) resolveDDLName(l.id, l.lien)
+      if (l.lien && l.lien.includes('1fichier.com')) {
+        resolveDDLName(l.id, l.lien)
+      } else if (!l.lien) {
+        // URL absente → fetch détail puis résolution
+        fetchLienURL(l)
+      }
+    }
+  }
+  async function fetchLienURL(l) {
+    if (l._urlFetching || l.lien) return
+    l._urlFetching = true
+    try {
+      const detail = await HydrackerGetLienDetailByID(l.id)
+      const url = detail?.directDL || detail?.raw_url || detail?.lien?.lien || ''
+      const debridErr = detail?.debrid_error || detail?.debrid_error_detail || ''
+      const liensArr = fichesContent.liens.liens.map(item => {
+        if (item.id !== l.id) return item
+        return { ...item, lien: url, _debridErr: debridErr, _debrided: !!detail?.debrided }
+      })
+      fichesContent = { ...fichesContent, liens: { ...fichesContent.liens, liens: liensArr } }
+      if (url && url.includes('1fichier.com')) resolveDDLName(l.id, url)
+    } catch(e) {
+      const msg = String(e)
+      const liensArr = fichesContent.liens.liens.map(item =>
+        item.id === l.id ? { ...item, _debridErr: msg } : item
+      )
+      fichesContent = { ...fichesContent, liens: { ...fichesContent.liens, liens: liensArr } }
     }
   }
 
@@ -2250,8 +2278,12 @@
                                 {:else if ddlFilenames[l.id]?.state === 'err'}
                                   <div class="cc-name cc-name-mono cc-sub-url">{l.lien}</div>
                                   <div class="cc-name-loading" style="color:#ff9585" title={ddlFilenames[l.id].error}>⚠ {ddlFilenames[l.id].error.length > 80 ? ddlFilenames[l.id].error.slice(0,80)+'…' : ddlFilenames[l.id].error}</div>
+                                {:else if l.lien}
+                                  <div class="cc-name cc-name-mono" title={l.lien}>{l.lien}</div>
+                                {:else if l._debridErr}
+                                  <div class="cc-name-loading" style="color:#ff9585" title={l._debridErr}>⚠ Débridage refusé : {l._debridErr.length > 100 ? l._debridErr.slice(0, 100) + '…' : l._debridErr}</div>
                                 {:else}
-                                  <div class="cc-name cc-name-mono" title={l.lien || ''}>{l.lien || '(URL masquée — clic Ouvrir pour résoudre)'}</div>
+                                  <div class="cc-name-loading">⏳ Débridage en cours…</div>
                                 {/if}
                                 <div class="cc-tags">
                                   {#each (l.langues_compact || []) as la}<span class="cc-tag cc-tag-lang">{langFlag(la.name)} {la.name}</span>{/each}
@@ -3869,10 +3901,10 @@
             </div>
           </div>
 
-          <!-- NextCloud ADMIN (upload MKV via WebDAV pour le workflow Torrent ADMIN) — verrouillé team -->
-          <div class="section section-locked">
+          <!-- NextCloud ADMIN (upload MKV via WebDAV pour le workflow Torrent ADMIN) — éditable -->
+          <div class="section">
             <div class="section-header">
-              <span>🔒 NextCloud ADMIN (verrouillé team)</span>
+              <span>NextCloud ADMIN</span>
               <button class="btn-test" on:click={() => runTest('nextcloudadmin', () => TestNextcloud(cfg.nextcloud_admin_url, cfg.nextcloud_admin_user, cfg.nextcloud_admin_password))}>
                 {#if testLoading.nextcloudadmin}…{:else}Tester{/if}
               </button>
@@ -3884,29 +3916,29 @@
               Upload du MKV via WebDAV (cert self-signed accepté). Le qBittorrent ADMIN partage le filesystem côté serveur.
             </div>
             <div class="field">
-              <label>URL NextCloud</label>
-              <input type="password" value={cfg.nextcloud_admin_url} disabled readonly />
+              <label for="nc-admin-url">URL NextCloud</label>
+              <input id="nc-admin-url" type="text" bind:value={cfg.nextcloud_admin_url} placeholder="https://95.217.107.120" />
             </div>
             <div class="fields-grid">
               <div class="field">
-                <label>Utilisateur</label>
-                <input type="password" value={cfg.nextcloud_admin_user} disabled readonly />
+                <label for="nc-admin-user">Utilisateur</label>
+                <input id="nc-admin-user" type="text" bind:value={cfg.nextcloud_admin_user} />
               </div>
               <div class="field">
-                <label>Mot de passe</label>
-                <input type="password" value={cfg.nextcloud_admin_password} disabled readonly />
+                <label for="nc-admin-pwd">Mot de passe</label>
+                <input id="nc-admin-pwd" type="password" bind:value={cfg.nextcloud_admin_password} />
               </div>
               <div class="field">
-                <label>Path remote</label>
-                <input type="password" value={cfg.nextcloud_admin_path} disabled readonly />
+                <label for="nc-admin-path">Path remote</label>
+                <input id="nc-admin-path" type="text" bind:value={cfg.nextcloud_admin_path} placeholder="/" />
               </div>
             </div>
           </div>
 
-          <!-- qBittorrent ADMIN (seedbox team-shared, paire avec NextCloud ADMIN) — verrouillé team -->
-          <div class="section section-locked">
+          <!-- qBittorrent ADMIN (seedbox team-shared, paire avec NextCloud ADMIN) — éditable -->
+          <div class="section">
             <div class="section-header">
-              <span>🔒 Seedbox ADMIN — qBittorrent (verrouillé team)</span>
+              <span>Seedbox ADMIN — qBittorrent</span>
               <button class="btn-test" on:click={() => runTest('qbitadmin', () => TestQBit(cfg.qbit_admin_url, cfg.qbit_admin_user, cfg.qbit_admin_password))}>
                 {#if testLoading.qbitadmin}…{:else}Tester{/if}
               </button>
@@ -3915,17 +3947,17 @@
               <div class="test-result" class:ok={testResults.qbitadmin.ok}>{testResults.qbitadmin.message}</div>
             {/if}
             <div class="field">
-              <label>URL qBittorrent Web UI</label>
-              <input type="password" value={cfg.qbit_admin_url} disabled readonly />
+              <label for="qbit-admin-url">URL qBittorrent Web UI</label>
+              <input id="qbit-admin-url" type="text" bind:value={cfg.qbit_admin_url} placeholder="http://95.217.107.120:8080/" />
             </div>
             <div class="fields-grid">
               <div class="field">
-                <label>Utilisateur</label>
-                <input type="password" value={cfg.qbit_admin_user} disabled readonly />
+                <label for="qbit-admin-user">Utilisateur</label>
+                <input id="qbit-admin-user" type="text" bind:value={cfg.qbit_admin_user} />
               </div>
               <div class="field">
-                <label>Mot de passe</label>
-                <input type="password" value={cfg.qbit_admin_password} disabled readonly />
+                <label for="qbit-admin-pwd">Mot de passe</label>
+                <input id="qbit-admin-pwd" type="password" bind:value={cfg.qbit_admin_password} />
               </div>
             </div>
           </div>

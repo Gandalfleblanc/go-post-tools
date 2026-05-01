@@ -65,21 +65,59 @@ func (c *Client) GetTorrents(titleID int, f ContentFilter) (*TorrentsResult, err
 
 var LastRawTorrents string
 
-// GetLienByID appelle /content/liens/{id} et retourne le Lien complet avec
-// l'URL de partage réelle (les endpoints de liste ne la renvoient pas).
+// LienDetail : réponse complète de /content/liens/{id}, avec URL débridée +
+// statut du débridage (utile pour afficher pourquoi un lien n'a pas d'URL).
+type LienDetail struct {
+	Lien            Lien   `json:"lien"`
+	DirectDL        string `json:"directDL"`
+	RawURL          string `json:"raw_url"`
+	Debrided        bool   `json:"debrided"`
+	DebridError     string `json:"debrid_error"`
+	DebridErrorInfo string `json:"debrid_error_detail"`
+	LinkSource      string `json:"link_source"`
+	Status          string `json:"status"`
+}
+
+// GetLienByID appelle /content/liens/{id} et retourne le Lien + l'URL débridée.
+//
+// Hydracker masque l'URL share dans les listes ET dans le détail brut. Le serveur
+// la débride dynamiquement en utilisant la clé 1Fichier configurée sur le compte
+// user (Settings Hydracker, pas notre app). Le résultat sort en `directDL` :
+//
+//	{
+//	  "lien": {...},        // métadonnées (id, qualite, taille, etc. — PAS d'URL)
+//	  "directDL": "https://a-12.1fichier.com/p2086862583",  // URL débridée directe
+//	  "raw_url": null,      // URL share originale (souvent null)
+//	  "debrided": true,
+//	  "debrid_error": null, // ou message si échec (quota, host non supporté, etc.)
+//	  "status": "success"
+//	}
+//
+// On copie directDL (ou raw_url en fallback) dans Lien.URL.
 func (c *Client) GetLienByID(id int) (*Lien, error) {
+	d, err := c.GetLienDetailByID(id)
+	if err != nil {
+		return nil, err
+	}
+	return &d.Lien, nil
+}
+
+// GetLienDetailByID retourne la réponse complète avec statut de débridage.
+func (c *Client) GetLienDetailByID(id int) (*LienDetail, error) {
 	data, err := c.get(fmt.Sprintf("/content/liens/%d", id), nil)
 	if err != nil {
 		return nil, err
 	}
-	// Shape probable : {"lien": {...}, "charged": 0, ...}
-	var resp struct {
-		Lien Lien `json:"lien"`
-	}
+	var resp LienDetail
 	if err := json.Unmarshal(data, &resp); err != nil {
 		return nil, err
 	}
-	return &resp.Lien, nil
+	if resp.DirectDL != "" {
+		resp.Lien.URL = resp.DirectDL
+	} else if resp.RawURL != "" {
+		resp.Lien.URL = resp.RawURL
+	}
+	return &resp, nil
 }
 
 // GetTorrentByID appelle /content/torrents/{id} et retourne l'item complet

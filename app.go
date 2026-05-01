@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	neturl "net/url"
 	"os/exec"
 	"runtime"
 	"sort"
@@ -939,6 +940,22 @@ func (a *App) HydrackerSearch(query string) ([]api.PartialTitle, error) {
 func (a *App) HydrackerGetByTmdbID(tmdbID int) (*api.PartialTitle, error) {
 	a.resetCancellation()
 	return a.client.GetTitleByTmdbID(tmdbID)
+}
+
+// HydrackerGetLienByID fetch un lien complet depuis /content/liens/{id} pour
+// récupérer l'URL réelle (les endpoints de liste /content/liens ne la renvoient
+// pas — elle apparaît seulement dans le détail).
+func (a *App) HydrackerGetLienByID(id int) (*api.Lien, error) {
+	a.resetCancellation()
+	return a.client.GetLienByID(id)
+}
+
+// HydrackerGetLienDetailByID retourne la réponse complète : Lien + statut de
+// débridage (URL débridée, debrid_error, etc.). Utile pour afficher pourquoi
+// un lien n'a pas d'URL (quota, host non supporté, etc.).
+func (a *App) HydrackerGetLienDetailByID(id int) (*api.LienDetail, error) {
+	a.resetCancellation()
+	return a.client.GetLienDetailByID(id)
 }
 
 func (a *App) HydrackerGetByID(id int) (*api.PartialTitle, error) {
@@ -2033,6 +2050,12 @@ func (a *App) GetDDLFilename(shareURL string) (string, error) {
 	if shareURL == "" {
 		return "", fmt.Errorf("URL vide")
 	}
+	// Détecte les URLs directes 1fichier (a-XX.1fichier.com / o-XX.1fichier.com / etc.)
+	// — elles sont déjà débridées par Hydracker, l'API info.cgi ne les accepte pas.
+	// On extrait le filename via HEAD + Content-Disposition.
+	if strings.Contains(shareURL, "1fichier.com/p") || regexp.MustCompile(`[a-z]-\d+\.1fichier\.com`).MatchString(shareURL) {
+		return getFilenameFromHEAD(shareURL)
+	}
 	if strings.Contains(shareURL, "1fichier.com") {
 		info, err := downloader.OneFichierGetInfo(context.Background(), a.cfg.OneFichierApiKey, shareURL)
 		if err != nil {
@@ -2040,7 +2063,58 @@ func (a *App) GetDDLFilename(shareURL string) (string, error) {
 		}
 		return info.Filename, nil
 	}
+	// Tente HEAD pour les autres hosts (Send.now etc.)
+	if name, err := getFilenameFromHEAD(shareURL); err == nil && name != "" {
+		return name, nil
+	}
 	return "", fmt.Errorf("host non supporté pour résolution de filename")
+}
+
+// getFilenameFromHEAD fait un HEAD HTTP et extrait le filename depuis
+// Content-Disposition (RFC 6266 : `attachment; filename="xxx"` ou `filename*=UTF-8''xxx`).
+func getFilenameFromHEAD(rawURL string) (string, error) {
+	req, err := http.NewRequest("HEAD", rawURL, nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("User-Agent", "Mozilla/5.0 GoPostTools/6.x")
+	c := &http.Client{Timeout: 15 * time.Second}
+	resp, err := c.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 && resp.StatusCode != 302 {
+		return "", fmt.Errorf("HTTP %d", resp.StatusCode)
+	}
+	cd := resp.Header.Get("Content-Disposition")
+	if cd == "" {
+		return "", fmt.Errorf("pas de Content-Disposition")
+	}
+	if i := strings.Index(cd, `filename="`); i >= 0 {
+		rest := cd[i+10:]
+		if end := strings.Index(rest, `"`); end > 0 {
+			return rest[:end], nil
+		}
+	}
+	if i := strings.Index(cd, "filename*=UTF-8''"); i >= 0 {
+		rest := cd[i+17:]
+		if end := strings.IndexAny(rest, ";\r\n"); end > 0 {
+			rest = rest[:end]
+		}
+		if dec, err := neturl.QueryUnescape(rest); err == nil {
+			return dec, nil
+		}
+		return rest, nil
+	}
+	if i := strings.Index(cd, "filename="); i >= 0 {
+		rest := cd[i+9:]
+		if end := strings.IndexAny(rest, ";\r\n"); end > 0 {
+			rest = rest[:end]
+		}
+		return strings.Trim(rest, `" `), nil
+	}
+	return "", fmt.Errorf("filename absent de Content-Disposition")
 }
 
 func (a *App) ReseedExecute(torrentPath, mkvPath string) error {
