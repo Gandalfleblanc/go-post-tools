@@ -31,7 +31,6 @@ import (
 	"go-post-tools/internal/ftpup"
 	"go-post-tools/internal/history"
 	"go-post-tools/internal/lihdl"
-	"go-post-tools/internal/nextcloud"
 	"go-post-tools/internal/nexum"
 	"go-post-tools/internal/nyuu"
 	"go-post-tools/internal/rutorrent"
@@ -259,29 +258,90 @@ func (a *App) applyUpdate(archivePath string) error {
 			return fmt.Errorf("unzip: %w", err)
 		}
 		newApp := filepath.Join(tmp, "Go Post Tools.app")
+		// Vérifie que l'extraction a bien produit le bundle attendu
+		if _, err := os.Stat(filepath.Join(newApp, "Contents", "MacOS", "Go Post Tools")); err != nil {
+			return fmt.Errorf("zip ne contient pas un bundle .app valide : %w", err)
+		}
 		// Le binaire courant est .../Go Post Tools.app/Contents/MacOS/Go Post Tools
 		// L'app bundle est donc 3 dossiers plus haut.
 		appBundle := exe
 		for i := 0; i < 3; i++ {
 			appBundle = filepath.Dir(appBundle)
 		}
+		// PID actuel pour que le script attende notre exit
+		myPid := os.Getpid()
+		logPath := filepath.Join(tmp, "install.log")
 		helper := filepath.Join(tmp, "install.sh")
 		script := fmt.Sprintf(`#!/bin/bash
-sleep 2
-rm -rf %q
+set -x
+exec >%q 2>&1
+echo "=== gpt update helper start ==="
+date
+
+# Attend que le process Wails ait vraiment quitté (libération des file locks)
+for i in {1..30}; do
+  if ! kill -0 %d 2>/dev/null; then
+    echo "process %d down (after $i sec)"
+    break
+  fi
+  sleep 1
+done
+sleep 1  # marge supplémentaire
+
+# Backup old bundle au cas où
+mv %q %q.gpt-old-$$ 2>&1
+
+# Vérifie que le déplacement a marché (sinon on essaye rm -rf)
+if [ -d %q ]; then
+  echo "WARN: mv a échoué, tente rm -rf"
+  rm -rf %q
+  if [ -d %q ]; then
+    echo "ERROR: impossible de supprimer l'ancien bundle (verrouillé ?)"
+    exit 1
+  fi
+fi
+
+# Copie le nouveau bundle
 cp -R %q %q
+if [ ! -f %q ]; then
+  echo "ERROR: cp -R a échoué — binaire absent dans le nouveau bundle"
+  # Restore le backup
+  mv %q.gpt-old-$$ %q 2>/dev/null
+  exit 1
+fi
+
+# Nettoyage attribut quarantine + lance la nouvelle version
 xattr -cr %q 2>/dev/null
+echo "✓ update applied, launching"
 open %q
-`, appBundle, newApp, appBundle, appBundle, appBundle)
+
+# Cleanup du backup en arrière-plan (évite d'avoir un dossier .gpt-old qui traîne)
+( sleep 5 && rm -rf %q.gpt-old-$$ ) &
+`,
+			logPath,
+			myPid, myPid,
+			appBundle, appBundle,
+			appBundle,
+			appBundle,
+			appBundle,
+			newApp, appBundle,
+			filepath.Join(appBundle, "Contents", "MacOS", "Go Post Tools"),
+			appBundle, appBundle,
+			appBundle,
+			appBundle,
+			appBundle,
+		)
 		if err := os.WriteFile(helper, []byte(script), 0755); err != nil {
 			return err
 		}
 		cmd := exec.Command("/bin/bash", helper)
+		// Détache le processus pour qu'il survive à notre exit
 		cmd.Stdout = nil
 		cmd.Stderr = nil
 		if err := cmd.Start(); err != nil {
 			return err
 		}
+		_ = cmd.Process.Release() // détache
 
 	case "linux":
 		// Archive = .tar.gz contenant le binaire "Go Post Tools"
@@ -2046,6 +2106,34 @@ func (a *App) GetUploaderStats(daysSince int) (*UploaderScanResult, error) {
 // GetDDLFilename résout le nom de fichier réel derrière une URL DDL (1fichier
 // pour l'instant). Utilisé dans la section Fiches pour afficher le vrai
 // filename à côté de chaque lien partagé.
+// GetDDLFilenameByLienID résout le nom du fichier à partir de l'ID stable du lien.
+// L'URL débridée 1Fichier change à chaque appel (URLs temporaires), donc on
+// préfère passer l'ID stable et faire le chain debrid → HEAD côté backend.
+func (a *App) GetDDLFilenameByLienID(lienID int) (string, error) {
+	a.resetCancellation()
+	detail, err := a.client.GetLienDetailByID(lienID)
+	if err != nil {
+		return "", fmt.Errorf("debrid: %w", err)
+	}
+	url := detail.DirectDL
+	if url == "" {
+		url = detail.RawURL
+	}
+	if url == "" {
+		if detail.DebridError != "" {
+			return "", fmt.Errorf("debrid refusé: %s", detail.DebridError)
+		}
+		return "", fmt.Errorf("URL absente de la réponse Hydracker")
+	}
+	return GetDDLFilename_(a, url)
+}
+
+// GetDDLFilename_ : version interne (sans capitalize) pour réutiliser depuis
+// GetDDLFilenameByLienID sans dupliquer la logique.
+func GetDDLFilename_(a *App, shareURL string) (string, error) {
+	return a.GetDDLFilename(shareURL)
+}
+
 func (a *App) GetDDLFilename(shareURL string) (string, error) {
 	if shareURL == "" {
 		return "", fmt.Errorf("URL vide")
@@ -2160,9 +2248,9 @@ func (a *App) ReseedExecute(torrentPath, mkvPath string) error {
 // --- Seedbox abstraction : choix explicite ou auto qBit vs ruTorrent ---
 //
 // seedboxType :
-//   - "admin"  : qBittorrent ADMIN team-shared (QBitAdminURL) — paire avec NextCloud
-//   - "prive"  : ruTorrent ou qBittorrent perso de l'user (PrivateSeedboxURL/PrivateQBitURL)
-//   - "modo"   : qBittorrent MODO team-shared (QBitURL) — paire avec FTP MODÉRATEUR
+//   - "admin"  : ruTorrent team-shared ma-seedbox.me (cfg.SeedboxURL)
+//   - "modo"   : qBittorrent MODO team-shared (cfg.QBitURL) — paire avec FTP MODÉRATEUR
+//   - "prive"  : ruTorrent OU qBittorrent perso de l'user (PrivateSeedboxURL/PrivateQBitURL)
 //   - ""       : auto = admin
 //
 // pushTorrent envoie un .torrent au seedbox cible. onProgress peut être nil.
@@ -2191,15 +2279,11 @@ func (a *App) pushTorrent(ctx context.Context, torrentPath, seedboxType string, 
 			}
 		})
 	}
-	// admin (ou "" → admin par défaut)
-	if a.cfg.QBitAdminURL == "" {
-		return "", fmt.Errorf("seedbox ADMIN (qBittorrent) non configurée")
+	// admin (ou "" → admin par défaut) → ruTorrent ma-seedbox.me
+	if a.cfg.SeedboxURL == "" {
+		return "", fmt.Errorf("seedbox ADMIN (ruTorrent) non configurée")
 	}
-	return qbittorrent.Upload(ctx, a.cfg.QBitAdminURL, a.cfg.QBitAdminUser, a.cfg.QBitAdminPassword, a.cfg.SeedboxLabel, torrentPath, func(p qbittorrent.Progress) {
-		if onProgress != nil {
-			onProgress(seedbox.Progress{Percent: p.Percent, SpeedMB: p.SpeedMB})
-		}
-	})
+	return seedbox.Upload(ctx, a.cfg.SeedboxURL, a.cfg.SeedboxUser, a.cfg.SeedboxPassword, a.cfg.SeedboxLabel, torrentPath, onProgress)
 }
 
 // recheckTorrent force un recheck côté seedbox cible.
@@ -2219,16 +2303,17 @@ func (a *App) recheckTorrent(hash, seedboxType string) error {
 		}
 		return qbittorrent.Recheck(a.cfg.QBitURL, a.cfg.QBitUser, a.cfg.QBitPassword, hash)
 	}
-	// admin (ou "")
-	if a.cfg.QBitAdminURL == "" {
+	// admin (ou "") → ruTorrent
+	if a.cfg.SeedboxURL == "" {
 		return fmt.Errorf("seedbox ADMIN non configurée")
 	}
-	return qbittorrent.Recheck(a.cfg.QBitAdminURL, a.cfg.QBitAdminUser, a.cfg.QBitAdminPassword, hash)
+	return rutorrent.Recheck(a.cfg.SeedboxURL, a.cfg.SeedboxUser, a.cfg.SeedboxPassword, hash)
 }
 
-// seedboxConfigured indique si au moins une seedbox team-shared (qBit ADMIN ou MODO) est configurée.
+// seedboxConfigured indique si au moins une seedbox team-shared est configurée
+// (ruTorrent ADMIN OU qBittorrent MODO).
 func (a *App) seedboxConfigured() bool {
-	return a.cfg.QBitAdminURL != "" || a.cfg.QBitURL != ""
+	return a.cfg.SeedboxURL != "" || a.cfg.QBitURL != ""
 }
 
 // findExistingTorrent cherche un torrent existant sur Hydracker qui matche
@@ -3479,11 +3564,11 @@ func (a *App) PostTorrentWorkflow(titleID, qualite int, langues, subs []string, 
 			return nil, fmt.Errorf("qBit Modérateur non configuré (Réglages)")
 		}
 	default: // admin
-		if a.cfg.NextcloudAdminURL == "" || a.cfg.NextcloudAdminUser == "" {
-			return nil, fmt.Errorf("NextCloud ADMIN non configuré — credentials manquants (build secrets)")
+		if a.cfg.FTPHost == "" || a.cfg.FTPUser == "" {
+			return nil, fmt.Errorf("FTP ADMIN non configuré — renseignez les Réglages")
 		}
-		if a.cfg.QBitAdminURL == "" {
-			return nil, fmt.Errorf("qBittorrent ADMIN non configuré — credentials manquants (build secrets)")
+		if a.cfg.SeedboxURL == "" {
+			return nil, fmt.Errorf("seedbox ADMIN (ruTorrent) non configurée — renseignez les Réglages")
 		}
 	}
 	if a.cfg.TrackerURL == "" {
@@ -3506,55 +3591,45 @@ func (a *App) PostTorrentWorkflow(titleID, qualite int, langues, subs []string, 
 		return nil, fmt.Errorf("stat source: %w", statErr)
 	}
 	isFolder := srcInfo.IsDir()
+	// Sélection du FTP selon le type de seedbox
+	//   - ADMIN → cfg.FTP*  (ma-seedbox.me ruTorrent team-shared)
+	//   - MODO  → cfg.FTPMod* (seedbox modos)
+	//   - PRIVE → cfg.PrivateFTP* (seedbox perso de l'user)
+	var ftpHost, ftpUser, ftpPass, ftpPath string
+	var ftpPort int
+	switch seedboxType {
+	case "modo":
+		if a.cfg.FTPModHost == "" {
+			return nil, fmt.Errorf("FTP Modérateur non configuré (Réglages)")
+		}
+		ftpHost, ftpPort, ftpUser, ftpPass, ftpPath = a.cfg.FTPModHost, a.cfg.FTPModPort, a.cfg.FTPModUser, a.cfg.FTPModPassword, a.cfg.FTPModPath
+		emit("ftp", "Upload FTP Modérateur…")
+	case "prive":
+		if a.cfg.PrivateFTPHost == "" {
+			return nil, fmt.Errorf("FTP Privé non configuré (Réglages)")
+		}
+		ftpHost, ftpPort, ftpUser, ftpPass, ftpPath = a.cfg.PrivateFTPHost, a.cfg.PrivateFTPPort, a.cfg.PrivateFTPUser, a.cfg.PrivateFTPPassword, a.cfg.PrivateFTPPath
+		emit("ftp", "Upload FTP Privé…")
+	default: // "admin" ou ""
+		ftpHost, ftpPort, ftpUser, ftpPass, ftpPath = a.cfg.FTPHost, a.cfg.FTPPort, a.cfg.FTPUser, a.cfg.FTPPassword, a.cfg.FTPPath
+		emit("ftp", "Upload FTP ADMIN…")
+	}
 	var remoteName string
 	var uploadErr error
-	if seedboxType == "admin" || seedboxType == "" {
-		if isFolder {
-			emit("ftp", "Upload NextCloud ADMIN (dossier saison)…")
-			remoteName, uploadErr = nextcloud.UploadFolder(a.workContext(), a.cfg.NextcloudAdminURL, a.cfg.NextcloudAdminUser, a.cfg.NextcloudAdminPassword, a.cfg.NextcloudAdminPath, mkvPath, func(p nextcloud.Progress) {
-				wailsruntime.EventsEmit(a.ctx, "torrent:ftp", p)
-			})
-		} else {
-			emit("ftp", "Upload NextCloud ADMIN…")
-			remoteName, uploadErr = nextcloud.Upload(a.workContext(), a.cfg.NextcloudAdminURL, a.cfg.NextcloudAdminUser, a.cfg.NextcloudAdminPassword, a.cfg.NextcloudAdminPath, mkvPath, func(p nextcloud.Progress) {
-				wailsruntime.EventsEmit(a.ctx, "torrent:ftp", p)
-			})
-		}
-		if uploadErr != nil {
-			return nil, fmt.Errorf("nextcloud: %w", uploadErr)
-		}
-		emit("ftp_done", fmt.Sprintf("NextCloud OK : %s", remoteName))
+	if isFolder {
+		emit("ftp", fmt.Sprintf("Upload FTP %s (dossier saison)…", strings.ToUpper(seedboxType)))
+		remoteName, uploadErr = ftpup.UploadFolder(a.workContext(), ftpHost, ftpPort, ftpUser, ftpPass, ftpPath, mkvPath, func(p ftpup.Progress) {
+			wailsruntime.EventsEmit(a.ctx, "torrent:ftp", p)
+		})
 	} else {
-		var ftpHost, ftpUser, ftpPass, ftpPath string
-		var ftpPort int
-		if seedboxType == "modo" {
-			if a.cfg.FTPModHost == "" {
-				return nil, fmt.Errorf("FTP Modérateur non configuré (Réglages)")
-			}
-			ftpHost, ftpPort, ftpUser, ftpPass, ftpPath = a.cfg.FTPModHost, a.cfg.FTPModPort, a.cfg.FTPModUser, a.cfg.FTPModPassword, a.cfg.FTPModPath
-			emit("ftp", "Upload FTP Modérateur…")
-		} else { // prive
-			if a.cfg.PrivateFTPHost == "" {
-				return nil, fmt.Errorf("FTP Privé non configuré (Réglages)")
-			}
-			ftpHost, ftpPort, ftpUser, ftpPass, ftpPath = a.cfg.PrivateFTPHost, a.cfg.PrivateFTPPort, a.cfg.PrivateFTPUser, a.cfg.PrivateFTPPassword, a.cfg.PrivateFTPPath
-			emit("ftp", "Upload FTP Privé…")
-		}
-		if isFolder {
-			emit("ftp", fmt.Sprintf("Upload FTP %s (dossier saison)…", strings.ToUpper(seedboxType)))
-			remoteName, uploadErr = ftpup.UploadFolder(a.workContext(), ftpHost, ftpPort, ftpUser, ftpPass, ftpPath, mkvPath, func(p ftpup.Progress) {
-				wailsruntime.EventsEmit(a.ctx, "torrent:ftp", p)
-			})
-		} else {
-			remoteName, uploadErr = ftpup.Upload(a.workContext(), ftpHost, ftpPort, ftpUser, ftpPass, ftpPath, mkvPath, func(p ftpup.Progress) {
-				wailsruntime.EventsEmit(a.ctx, "torrent:ftp", p)
-			})
-		}
-		if uploadErr != nil {
-			return nil, fmt.Errorf("ftp: %w", uploadErr)
-		}
-		emit("ftp_done", fmt.Sprintf("FTP OK : %s", remoteName))
+		remoteName, uploadErr = ftpup.Upload(a.workContext(), ftpHost, ftpPort, ftpUser, ftpPass, ftpPath, mkvPath, func(p ftpup.Progress) {
+			wailsruntime.EventsEmit(a.ctx, "torrent:ftp", p)
+		})
 	}
+	if uploadErr != nil {
+		return nil, fmt.Errorf("ftp: %w", uploadErr)
+	}
+	emit("ftp_done", fmt.Sprintf("FTP OK : %s", remoteName))
 
 	// 2. Créer le .torrent (.torrent placé à côté de la source — sortie du folder
 	// pour ne pas être inclus dans le hashing).

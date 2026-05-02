@@ -44,8 +44,9 @@ type Client struct {
 	OnRequestLog func(entry APILogEntry)
 }
 
-// minInterval respecte le rate limit Hydracker (1 req/s par token).
-const minInterval = 1050 * time.Millisecond
+// minInterval respecte le rate limit Hydracker (~0.7 req/s par token).
+// Marge confortable pour éviter un ban en cas de bursts ou jitter réseau.
+const minInterval = 1500 * time.Millisecond
 
 // waitRateLimit doit être appelé avant chaque requête. Bloque le temps
 // nécessaire pour ne pas dépasser 1 req/s.

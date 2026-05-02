@@ -122,6 +122,10 @@ export function GetDDLFilename(arg1) {
   return window['go']['main']['App']['GetDDLFilename'](arg1);
 }
 
+export function GetDDLFilenameByLienID(arg1) {
+  return window['go']['main']['App']['GetDDLFilenameByLienID'](arg1);
+}
+
 export function GetEffectiveHydrackerURL() {
   return window['go']['main']['App']['GetEffectiveHydrackerURL']();
 }
@@ -200,6 +204,14 @@ export function HydrackerGetByID(arg1) {
 
 export function HydrackerGetByTmdbID(arg1) {
   return window['go']['main']['App']['HydrackerGetByTmdbID'](arg1);
+}
+
+export function HydrackerGetLienByID(arg1) {
+  return window['go']['main']['App']['HydrackerGetLienByID'](arg1);
+}
+
+export function HydrackerGetLienDetailByID(arg1) {
+  return window['go']['main']['App']['HydrackerGetLienDetailByID'](arg1);
 }
 
 export function HydrackerSearch(arg1) {

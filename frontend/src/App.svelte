@@ -6,7 +6,7 @@
   import { logEntries, addLog, clearLogs } from './logs.js'
   import logo from './assets/logo.png'
   import loginLogo from './assets/login-logo.png'
-  import { ListCheckTorrents, ReseedFromLihdl, ReseedPrepare, ReseedExecute, SelectAnyTorrentFile, SelectMkvFile, GetVersion, StartWatchFolder, StopWatchFolder, IsWatching, CheckForUpdate, OpenBrowser, HistoryList, HistoryDelete, HistoryStats, DownloadUpdate, HasLihdlSettingsPassword, SetLihdlSettingsPassword, VerifyLihdlSettingsPassword, ClearLihdlSettingsPassword, IsLihdlPasswordManaged, IsHydrackerURLManaged, GetEffectiveHydrackerURL, FindHydrackerSources, FicheGetContent, FicheGetNfo, GetDDLFilename, GetUploaderStats, LoginUser, Logout, GetCurrentUser, TryAutoLogin, HashPassword, GetTeamConfig, BuildTeamJSON, FetchHydrackerAvatar, ChangeMyPassword, GetNzbFilenames, DeleteSeedboxByHash, MediaSearch, HydrackerSearch, TMDBGetByImdbID, TMDBGetProviders, HydrackerGetByID, HydrackerGetByTmdbID, HydrackerGetLienByID, HydrackerGetLienDetailByID, DownloadToDownloads, AutoReseedFromHydracker, AutoReseedDDLFromHydracker, AutoReseedFullFromTorrent, ListReseedRequests, ListMyLiens, ListMyTorrents, DeleteMyLien, DeleteMyTorrent, DeleteMyNzb, DeleteTorrentAndFTP, ListSeedboxHashes, GetNexumIndex, TestNexum, UpdateMyLien, UpdateMyTorrent, GetMetaQualities, ListTitlesSorted, GetUserProfile, ParseFilename, Notify } from '../wailsjs/go/main/App.js'
+  import { ListCheckTorrents, ReseedFromLihdl, ReseedPrepare, ReseedExecute, SelectAnyTorrentFile, SelectMkvFile, GetVersion, StartWatchFolder, StopWatchFolder, IsWatching, CheckForUpdate, OpenBrowser, HistoryList, HistoryDelete, HistoryStats, DownloadUpdate, HasLihdlSettingsPassword, SetLihdlSettingsPassword, VerifyLihdlSettingsPassword, ClearLihdlSettingsPassword, IsLihdlPasswordManaged, IsHydrackerURLManaged, GetEffectiveHydrackerURL, FindHydrackerSources, FicheGetContent, FicheGetNfo, GetDDLFilename, GetUploaderStats, LoginUser, Logout, GetCurrentUser, TryAutoLogin, HashPassword, GetTeamConfig, BuildTeamJSON, FetchHydrackerAvatar, ChangeMyPassword, GetNzbFilenames, DeleteSeedboxByHash, MediaSearch, HydrackerSearch, TMDBGetByImdbID, TMDBGetProviders, HydrackerGetByID, HydrackerGetByTmdbID, HydrackerGetLienByID, HydrackerGetLienDetailByID, GetDDLFilenameByLienID, DownloadToDownloads, AutoReseedFromHydracker, AutoReseedDDLFromHydracker, AutoReseedFullFromTorrent, ListReseedRequests, ListMyLiens, ListMyTorrents, DeleteMyLien, DeleteMyTorrent, DeleteMyNzb, DeleteTorrentAndFTP, ListSeedboxHashes, GetNexumIndex, TestNexum, UpdateMyLien, UpdateMyTorrent, GetMetaQualities, ListTitlesSorted, GetUserProfile, ParseFilename, Notify } from '../wailsjs/go/main/App.js'
 
   // --- Tabs (réorganisés par workflow, 8 onglets principaux) ---
   const TABS = [
@@ -827,20 +827,20 @@
 
   // --- DDL filename resolver (cache mémoire pendant la session) ---
   // ddlFilenames[lien.id] = { state: 'loading'|'ok'|'err', filename, error }
-  // Queue séquentielle avec délai pour éviter rate limit 1fichier (429).
+  // Queue séquentielle keyée par lien ID (l'URL débridée change à chaque debrid).
   let ddlFilenames = {}
-  let ddlQueue = []
+  let ddlQueue = []  // [lienId]
   let ddlQueueRunning = false
   async function processDDLQueue() {
     if (ddlQueueRunning) return
     ddlQueueRunning = true
     while (ddlQueue.length > 0) {
-      const { lienId, url } = ddlQueue.shift()
-      // Retry simple : 1 retry après 2s sur 429, sinon abandon
+      const lienId = ddlQueue.shift()
       let attempt = 0
       while (attempt < 2) {
         try {
-          const fname = await GetDDLFilename(url)
+          // Backend fait debrid + HEAD via ID stable, pas l'URL volatile
+          const fname = await GetDDLFilenameByLienID(lienId)
           ddlFilenames = { ...ddlFilenames, [lienId]: { state: 'ok', filename: fname } }
           break
         } catch(e) {
@@ -854,52 +854,26 @@
           break
         }
       }
-      // Délai entre chaque requête pour rester sous le rate limit
-      await new Promise(r => setTimeout(r, 350))
+      // Rate limit : 1.5s entre chaque appel pour éviter ban Hydracker / 1Fichier
+      await new Promise(r => setTimeout(r, 1500))
     }
     ddlQueueRunning = false
   }
-  function resolveDDLName(lienId, url) {
-    if (!url || !url.includes('1fichier.com')) return
+  function resolveDDLName(lienId) {
+    if (!lienId) return
     if (ddlFilenames[lienId]) return  // déjà résolu/en cours/échoué
-    if (ddlQueue.some(x => x.lienId === lienId)) return  // déjà en queue
+    if (ddlQueue.includes(lienId)) return  // déjà en queue
     ddlFilenames = { ...ddlFilenames, [lienId]: { state: 'loading' } }
-    ddlQueue.push({ lienId, url })
+    ddlQueue.push(lienId)
     processDDLQueue()
   }
   // Auto-résolution batch dès qu'on bascule sur l'onglet "Liens DDL" d'une fiche.
-  // L'API liste /content/liens ne renvoie PAS le champ "lien" — on fetch chaque
-  // détail via HydrackerGetLienByID pour récupérer l'URL, puis résolution 1Fichier
-  // pour avoir le filename.
+  // On passe juste l'ID stable au backend qui se débrouille pour debrid + HEAD.
+  // L'URL est volatile (chaque debrid en regénère une nouvelle) donc inutile
+  // de la stocker côté frontend.
   $: if (fichesContentTab === 'liens' && fichesContent?.liens?.liens?.length) {
     for (const l of fichesContent.liens.liens) {
-      if (l.lien && l.lien.includes('1fichier.com')) {
-        resolveDDLName(l.id, l.lien)
-      } else if (!l.lien) {
-        // URL absente → fetch détail puis résolution
-        fetchLienURL(l)
-      }
-    }
-  }
-  async function fetchLienURL(l) {
-    if (l._urlFetching || l.lien) return
-    l._urlFetching = true
-    try {
-      const detail = await HydrackerGetLienDetailByID(l.id)
-      const url = detail?.directDL || detail?.raw_url || detail?.lien?.lien || ''
-      const debridErr = detail?.debrid_error || detail?.debrid_error_detail || ''
-      const liensArr = fichesContent.liens.liens.map(item => {
-        if (item.id !== l.id) return item
-        return { ...item, lien: url, _debridErr: debridErr, _debrided: !!detail?.debrided }
-      })
-      fichesContent = { ...fichesContent, liens: { ...fichesContent.liens, liens: liensArr } }
-      if (url && url.includes('1fichier.com')) resolveDDLName(l.id, url)
-    } catch(e) {
-      const msg = String(e)
-      const liensArr = fichesContent.liens.liens.map(item =>
-        item.id === l.id ? { ...item, _debridErr: msg } : item
-      )
-      fichesContent = { ...fichesContent, liens: { ...fichesContent.liens, liens: liensArr } }
+      resolveDDLName(l.id)
     }
   }
 
@@ -2271,19 +2245,12 @@
                                 </div>
                                 {#if ddlFilenames[l.id]?.state === 'ok'}
                                   <div class="cc-name" title={ddlFilenames[l.id].filename}>{ddlFilenames[l.id].filename}</div>
-                                  <div class="cc-name cc-name-mono cc-sub-url" title={l.lien || ''}>{l.lien}</div>
                                 {:else if ddlFilenames[l.id]?.state === 'loading'}
-                                  <div class="cc-name cc-name-mono cc-sub-url">{l.lien}</div>
-                                  <div class="cc-name-loading">⏳ Résolution du nom du fichier…</div>
+                                  <div class="cc-name-loading">⏳ Débridage + résolution du nom…</div>
                                 {:else if ddlFilenames[l.id]?.state === 'err'}
-                                  <div class="cc-name cc-name-mono cc-sub-url">{l.lien}</div>
-                                  <div class="cc-name-loading" style="color:#ff9585" title={ddlFilenames[l.id].error}>⚠ {ddlFilenames[l.id].error.length > 80 ? ddlFilenames[l.id].error.slice(0,80)+'…' : ddlFilenames[l.id].error}</div>
-                                {:else if l.lien}
-                                  <div class="cc-name cc-name-mono" title={l.lien}>{l.lien}</div>
-                                {:else if l._debridErr}
-                                  <div class="cc-name-loading" style="color:#ff9585" title={l._debridErr}>⚠ Débridage refusé : {l._debridErr.length > 100 ? l._debridErr.slice(0, 100) + '…' : l._debridErr}</div>
+                                  <div class="cc-name-loading" style="color:#ff9585" title={ddlFilenames[l.id].error}>⚠ {ddlFilenames[l.id].error.length > 100 ? ddlFilenames[l.id].error.slice(0,100)+'…' : ddlFilenames[l.id].error}</div>
                                 {:else}
-                                  <div class="cc-name-loading">⏳ Débridage en cours…</div>
+                                  <div class="cc-name-loading">⏳ En attente…</div>
                                 {/if}
                                 <div class="cc-tags">
                                   {#each (l.langues_compact || []) as la}<span class="cc-tag cc-tag-lang">{langFlag(la.name)} {la.name}</span>{/each}
@@ -3901,63 +3868,68 @@
             </div>
           </div>
 
-          <!-- NextCloud ADMIN (upload MKV via WebDAV pour le workflow Torrent ADMIN) — éditable -->
+          <!-- FTP RUTORRENT ADMIN (ma-seedbox.me — workflow Torrent ADMIN) -->
           <div class="section">
             <div class="section-header">
-              <span>NextCloud ADMIN</span>
-              <button class="btn-test" on:click={() => runTest('nextcloudadmin', () => TestNextcloud(cfg.nextcloud_admin_url, cfg.nextcloud_admin_user, cfg.nextcloud_admin_password))}>
-                {#if testLoading.nextcloudadmin}…{:else}Tester{/if}
+              <span>FTP ADMIN (ma-seedbox.me)</span>
+              <button class="btn-test" on:click={() => runTest('ftp', () => TestFTP(cfg.ftp_host, cfg.ftp_port, cfg.ftp_user, cfg.ftp_password))}>
+                {#if testLoading.ftp}…{:else}Tester{/if}
               </button>
             </div>
-            {#if testResults.nextcloudadmin}
-              <div class="test-result" class:ok={testResults.nextcloudadmin.ok}>{testResults.nextcloudadmin.message}</div>
+            {#if testResults.ftp}
+              <div class="test-result" class:ok={testResults.ftp.ok}>{testResults.ftp.message}</div>
             {/if}
-            <div style="color:var(--text3);font-size:11px;margin-bottom:8px">
-              Upload du MKV via WebDAV (cert self-signed accepté). Le qBittorrent ADMIN partage le filesystem côté serveur.
-            </div>
-            <div class="field">
-              <label for="nc-admin-url">URL NextCloud</label>
-              <input id="nc-admin-url" type="text" bind:value={cfg.nextcloud_admin_url} placeholder="https://95.217.107.120" />
-            </div>
             <div class="fields-grid">
               <div class="field">
-                <label for="nc-admin-user">Utilisateur</label>
-                <input id="nc-admin-user" type="text" bind:value={cfg.nextcloud_admin_user} />
+                <label for="ftp-host">Hôte</label>
+                <input id="ftp-host" type="text" bind:value={cfg.ftp_host} placeholder="ftp.example.com" />
               </div>
               <div class="field">
-                <label for="nc-admin-pwd">Mot de passe</label>
-                <input id="nc-admin-pwd" type="password" bind:value={cfg.nextcloud_admin_password} />
+                <label for="ftp-port">Port</label>
+                <input id="ftp-port" type="number" bind:value={cfg.ftp_port} />
               </div>
               <div class="field">
-                <label for="nc-admin-path">Path remote</label>
-                <input id="nc-admin-path" type="text" bind:value={cfg.nextcloud_admin_path} placeholder="/" />
+                <label for="ftp-user">Utilisateur</label>
+                <input id="ftp-user" type="text" bind:value={cfg.ftp_user} />
+              </div>
+              <div class="field">
+                <label for="ftp-pass">Mot de passe</label>
+                <input id="ftp-pass" type="password" bind:value={cfg.ftp_password} />
+              </div>
+              <div class="field">
+                <label for="ftp-path">Dossier distant</label>
+                <input id="ftp-path" type="text" bind:value={cfg.ftp_path} placeholder="/" />
               </div>
             </div>
           </div>
 
-          <!-- qBittorrent ADMIN (seedbox team-shared, paire avec NextCloud ADMIN) — éditable -->
+          <!-- Seedbox ADMIN ruTorrent (ma-seedbox.me) -->
           <div class="section">
             <div class="section-header">
-              <span>Seedbox ADMIN — qBittorrent</span>
-              <button class="btn-test" on:click={() => runTest('qbitadmin', () => TestQBit(cfg.qbit_admin_url, cfg.qbit_admin_user, cfg.qbit_admin_password))}>
-                {#if testLoading.qbitadmin}…{:else}Tester{/if}
+              <span>Seedbox ADMIN — ruTorrent</span>
+              <button class="btn-test" on:click={() => runTest('seedbox', () => TestSeedbox(cfg.seedbox_url, cfg.seedbox_user, cfg.seedbox_password))}>
+                {#if testLoading.seedbox}…{:else}Tester{/if}
               </button>
             </div>
-            {#if testResults.qbitadmin}
-              <div class="test-result" class:ok={testResults.qbitadmin.ok}>{testResults.qbitadmin.message}</div>
+            {#if testResults.seedbox}
+              <div class="test-result" class:ok={testResults.seedbox.ok}>{testResults.seedbox.message}</div>
             {/if}
             <div class="field">
-              <label for="qbit-admin-url">URL qBittorrent Web UI</label>
-              <input id="qbit-admin-url" type="text" bind:value={cfg.qbit_admin_url} placeholder="http://95.217.107.120:8080/" />
+              <label for="seedbox-url">URL ruTorrent</label>
+              <input id="seedbox-url" type="text" bind:value={cfg.seedbox_url} placeholder="https://my-seedbox.example/seedbox-XXXX/rutorrent/" />
             </div>
             <div class="fields-grid">
               <div class="field">
-                <label for="qbit-admin-user">Utilisateur</label>
-                <input id="qbit-admin-user" type="text" bind:value={cfg.qbit_admin_user} />
+                <label for="seedbox-user">Utilisateur</label>
+                <input id="seedbox-user" type="text" bind:value={cfg.seedbox_user} />
               </div>
               <div class="field">
-                <label for="qbit-admin-pwd">Mot de passe</label>
-                <input id="qbit-admin-pwd" type="password" bind:value={cfg.qbit_admin_password} />
+                <label for="seedbox-pwd">Mot de passe</label>
+                <input id="seedbox-pwd" type="password" bind:value={cfg.seedbox_password} />
+              </div>
+              <div class="field">
+                <label for="seedbox-label">Label (optionnel)</label>
+                <input id="seedbox-label" type="text" bind:value={cfg.seedbox_label} placeholder="hydracker" />
               </div>
             </div>
           </div>
