@@ -52,7 +52,10 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-const Version = "6.0.0"
+// IMPORTANT : doit être en sync avec wails.json `productVersion`. Si tu bump
+// l'un, bump l'autre — sinon l'auto-update boucle (compare current=Version
+// vs latest=tag GitHub).
+const Version = "6.0.3"
 
 type App struct {
 	ctx         context.Context
