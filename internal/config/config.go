@@ -90,13 +90,20 @@ type Config struct {
 	FTPModPassword string `json:"ftp_mod_password"`
 	FTPModPath     string `json:"ftp_mod_path"`
 
-	// NextCloud ADMIN — remplace le FTP ADMIN historique. L'app upload le MKV
-	// via WebDAV PUT, et le qBittorrent ADMIN (qui partage le filesystem côté
-	// serveur) hash le fichier et seed.
+	// NextCloud ADMIN — historiquement utilisé pour Torrent ADMIN (revert en v6.0.2,
+	// reste en config pour rétrocompat — workflow ADMIN repassé sur FTP+ruTorrent).
 	NextcloudAdminURL      string `json:"nextcloud_admin_url"`
 	NextcloudAdminUser     string `json:"nextcloud_admin_user"`
 	NextcloudAdminPassword string `json:"nextcloud_admin_password"`
-	NextcloudAdminPath     string `json:"nextcloud_admin_path"` // remote path (ex: "/" pour la racine)
+	NextcloudAdminPath     string `json:"nextcloud_admin_path"`
+
+	// NextCloud MOD — upload MKV via WebDAV pour le workflow Torrent MODO.
+	// La seedbox MOD (cluster1c.seedbox.fr) expose un NextCloud, le qBit MODO
+	// récupère le MKV depuis le filesystem partagé une fois uploadé.
+	NextcloudModURL      string `json:"nextcloud_mod_url"`
+	NextcloudModUser     string `json:"nextcloud_mod_user"`
+	NextcloudModPassword string `json:"nextcloud_mod_password"`
+	NextcloudModPath     string `json:"nextcloud_mod_path"`
 
 	// qBittorrent ADMIN — remplace ruTorrent ADMIN (cfg.SeedboxURL).
 	QBitAdminURL      string `json:"qbit_admin_url"`
@@ -203,6 +210,12 @@ var (
 	DefaultQBitAdminUser     = ""
 	DefaultQBitAdminPassword = ""
 
+	// NextCloud MOD — team-shared, baké au build (workflow Torrent MODO)
+	DefaultNextcloudModURL      = ""
+	DefaultNextcloudModUser     = ""
+	DefaultNextcloudModPassword = ""
+	DefaultNextcloudModPath     = ""
+
 	DefaultTrackerURL = ""
 
 	// TMDB : URLs bakées au build pour verrouiller la section TMDB côté user.
@@ -266,6 +279,10 @@ func Load() *Config {
 	override(&cfg.QBitAdminURL, DefaultQBitAdminURL)
 	override(&cfg.QBitAdminUser, DefaultQBitAdminUser)
 	override(&cfg.QBitAdminPassword, DefaultQBitAdminPassword)
+	override(&cfg.NextcloudModURL, DefaultNextcloudModURL)
+	override(&cfg.NextcloudModUser, DefaultNextcloudModUser)
+	override(&cfg.NextcloudModPassword, DefaultNextcloudModPassword)
+	override(&cfg.NextcloudModPath, DefaultNextcloudModPath)
 	override(&cfg.TrackerURL, DefaultTrackerURL)
 	override(&cfg.TMDBProxyURL, DefaultTMDBProxyURL)
 	override(&cfg.MediaSearchURL, DefaultMediaSearchURL)

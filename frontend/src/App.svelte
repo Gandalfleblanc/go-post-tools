@@ -3962,10 +3962,10 @@
             </div>
           </div>
 
-          <!-- FTP MODÉRATEUR (upload gros fichiers MKV pour le workflow Torrent MODO) -->
-          <div class="section section-locked">
+          <!-- FTP MODÉRATEUR (upload gros fichiers MKV pour le workflow Torrent MODO) — éditable -->
+          <div class="section">
             <div class="section-header">
-              <span>🔒 FTP Modérateur (verrouillé team)</span>
+              <span>FTP Modérateur</span>
               <button class="btn-test" on:click={() => runTest('ftpmod', () => TestFTP(cfg.ftp_mod_host, cfg.ftp_mod_port, cfg.ftp_mod_user, cfg.ftp_mod_password))}>
                 {#if testLoading.ftpmod}…{:else}Tester{/if}
               </button>
@@ -3978,32 +3978,32 @@
             </div>
             <div class="fields-grid">
               <div class="field">
-                <label>Hôte</label>
-                <input type="password" value={cfg.ftp_mod_host} disabled readonly />
+                <label for="ftpmod-host">Hôte</label>
+                <input id="ftpmod-host" type="text" bind:value={cfg.ftp_mod_host} placeholder="ftp.example.com" />
               </div>
               <div class="field">
-                <label>Port</label>
-                <input type="password" value={cfg.ftp_mod_port} disabled readonly />
+                <label for="ftpmod-port">Port</label>
+                <input id="ftpmod-port" type="number" bind:value={cfg.ftp_mod_port} />
               </div>
               <div class="field">
-                <label>Utilisateur</label>
-                <input type="password" value={cfg.ftp_mod_user} disabled readonly />
+                <label for="ftpmod-user">Utilisateur</label>
+                <input id="ftpmod-user" type="text" bind:value={cfg.ftp_mod_user} />
               </div>
               <div class="field">
-                <label>Mot de passe</label>
-                <input type="password" value={cfg.ftp_mod_password} disabled readonly />
+                <label for="ftpmod-pwd">Mot de passe</label>
+                <input id="ftpmod-pwd" type="password" bind:value={cfg.ftp_mod_password} />
               </div>
               <div class="field">
-                <label>Dossier distant</label>
-                <input type="password" value={cfg.ftp_mod_path} disabled readonly />
+                <label for="ftpmod-path">Dossier distant</label>
+                <input id="ftpmod-path" type="text" bind:value={cfg.ftp_mod_path} placeholder="/" />
               </div>
             </div>
           </div>
 
-          <!-- Seedbox MODÉRATEUR (qBittorrent shared team) -->
-          <div class="section section-locked">
+          <!-- Seedbox MODÉRATEUR (qBittorrent shared team) — éditable -->
+          <div class="section">
             <div class="section-header">
-              <span>🔒 Seedbox Modérateur — qBittorrent (verrouillé team)</span>
+              <span>Seedbox Modérateur — qBittorrent</span>
               <button class="btn-test" on:click={() => runTest('qbit', () => TestQBit(cfg.qbit_url, cfg.qbit_user, cfg.qbit_password))}>
                 {#if testLoading.qbit}…{:else}Tester{/if}
               </button>
@@ -4013,16 +4013,16 @@
             {/if}
             <div class="field">
               <label for="qbit-url">URL qBittorrent Web UI</label>
-              <input id="qbit-url" type="password" value={cfg.qbit_url} disabled readonly />
+              <input id="qbit-url" type="text" bind:value={cfg.qbit_url} placeholder="http://host:port/" />
             </div>
             <div class="fields-grid">
               <div class="field">
-                <label>Utilisateur</label>
-                <input type="password" value={cfg.qbit_user} disabled readonly />
+                <label for="qbit-user">Utilisateur</label>
+                <input id="qbit-user" type="text" bind:value={cfg.qbit_user} />
               </div>
               <div class="field">
-                <label>Mot de passe</label>
-                <input type="password" value={cfg.qbit_password} disabled readonly />
+                <label for="qbit-pwd">Mot de passe</label>
+                <input id="qbit-pwd" type="password" bind:value={cfg.qbit_password} />
               </div>
             </div>
           </div>
