@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,6 +14,18 @@ import (
 	"github.com/jlaffaye/ftp"
 )
 
+// dialerWithKeepalive : net.Dialer avec TCP keepalive pour éviter que ma-seedbox.me
+// ferme la connexion control pendant les uploads longs (lien lent → upload de plusieurs
+// heures sans activité côté FTP commands → server timeout → EOF en STOR).
+//
+// SO_KEEPALIVE active les probes TCP automatiques par l'OS (toutes les ~30s
+// sur macOS), ce qui maintient la connexion vivante côté serveur sans avoir
+// à mixer NOOP pendant un STOR (qui casserait le protocole).
+var dialerWithKeepalive = &net.Dialer{
+	Timeout:   15 * time.Second,
+	KeepAlive: 30 * time.Second,
+}
+
 type Progress struct {
 	Percent float64 `json:"percent"`
 	SpeedMB float64 `json:"speed_mb"`
@@ -20,6 +33,7 @@ type Progress struct {
 
 type progressReader struct {
 	r          io.Reader
+	ctx        context.Context // si non-nil, abort immédiat sur ctx.Done()
 	total      int64
 	read       int64
 	start      time.Time
@@ -28,6 +42,14 @@ type progressReader struct {
 }
 
 func (pr *progressReader) Read(p []byte) (n int, err error) {
+	// Cancel-aware : retourne erreur immédiate si l'user clique Stop. C'est
+	// ce qui permet d'interrompre un STOR en cours (vs c.Quit() qui attend
+	// la fin de la commande active).
+	if pr.ctx != nil {
+		if cerr := pr.ctx.Err(); cerr != nil {
+			return 0, cerr
+		}
+	}
 	n, err = pr.r.Read(p)
 	if n > 0 && pr.onProgress != nil {
 		pr.read += int64(n)
@@ -73,7 +95,7 @@ func UploadFromReader(ctx context.Context, host string, port int, user, password
 		port = 21
 	}
 	addr := fmt.Sprintf("%s:%d", host, port)
-	c, err := ftp.Dial(addr, ftp.DialWithTimeout(15*time.Second))
+	c, err := ftp.Dial(addr, ftp.DialWithDialFunc(dialerWithKeepalive.Dial))
 	if err != nil {
 		return fmt.Errorf("connexion FTP: %w", err)
 	}
@@ -91,7 +113,7 @@ func UploadFromReader(ctx context.Context, host string, port int, user, password
 	now := time.Now()
 	body := r
 	if onProgress != nil && total > 0 {
-		body = &progressReader{r: r, total: total, start: now, lastEmit: now, onProgress: onProgress}
+		body = &progressReader{r: r, ctx: ctx, total: total, start: now, lastEmit: now, onProgress: onProgress}
 	}
 	if err := c.Stor(remoteName, body); err != nil {
 		if ctx != nil && ctx.Err() != nil {
@@ -105,7 +127,12 @@ func UploadFromReader(ctx context.Context, host string, port int, user, password
 	return nil
 }
 
-// Upload envoie filePath vers le FTP et retourne le nom distant utilisé.
+// Upload envoie filePath vers le FTP avec auto-resume sur disconnect.
+//
+// Si la connexion est coupée pendant le STOR (EOF, connection reset, timeout),
+// on reconnecte et on reprend via REST/STOR_FROM à partir de l'offset déjà
+// envoyé. Jusqu'à 5 retries avec backoff. Le ctx permet l'annulation par
+// l'user (Stop button) qui est respectée immédiatement.
 func Upload(ctx context.Context, host string, port int, user, password, remotePath, filePath string, onProgress func(Progress)) (string, error) {
 	if host == "" {
 		return "", fmt.Errorf("host FTP manquant")
@@ -114,53 +141,128 @@ func Upload(ctx context.Context, host string, port int, user, password, remotePa
 		port = 21
 	}
 	addr := fmt.Sprintf("%s:%d", host, port)
-	c, err := ftp.Dial(addr, ftp.DialWithTimeout(15*time.Second))
-	if err != nil {
-		return "", fmt.Errorf("connexion FTP: %w", err)
-	}
-	defer c.Quit()
-	stopWatch := watchdogFTP(ctx, c)
-	defer stopWatch()
-
-	if err := c.Login(user, password); err != nil {
-		return "", fmt.Errorf("login FTP: %w", err)
-	}
-
-	if remotePath != "" && remotePath != "/" {
-		if err := c.ChangeDir(remotePath); err != nil {
-			return "", fmt.Errorf("cd %s: %w", remotePath, err)
-		}
-	}
 
 	f, err := os.Open(filePath)
 	if err != nil {
 		return "", fmt.Errorf("ouverture %s: %w", filePath, err)
 	}
 	defer f.Close()
-
 	info, err := f.Stat()
 	if err != nil {
 		return "", err
 	}
-
+	totalSize := info.Size()
 	remoteName := filepath.Base(filePath)
 	now := time.Now()
-	body := io.Reader(f)
-	if onProgress != nil {
-		body = &progressReader{r: f, total: info.Size(), start: now, lastEmit: now, onProgress: onProgress}
+
+	// Compteur de bytes effectivement envoyés au serveur (cumulé sur tous les retries)
+	var sentBytes int64
+	makeReader := func() io.Reader {
+		// Seek le file au bon offset (resume)
+		if _, err := f.Seek(sentBytes, 0); err != nil {
+			return nil
+		}
+		// On wrap toujours dans counterReader pour tracker sentBytes (resume offset),
+		// + progressReader par-dessus si onProgress est fourni (UI).
+		base := &counterReader{r: f, ctx: ctx, count: &sentBytes}
+		if onProgress != nil {
+			return &progressReader{
+				r:          base,
+				ctx:        nil, // le ctx est déjà checké par counterReader
+				total:      totalSize,
+				read:       sentBytes,
+				start:      now,
+				lastEmit:   now,
+				onProgress: onProgress,
+			}
+		}
+		return base
 	}
 
-	if err := c.Stor(remoteName, body); err != nil {
+	maxRetries := 5
+	var lastErr error
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		// Annulation par l'user
 		if ctx != nil && ctx.Err() != nil {
 			return "", fmt.Errorf("annulé")
 		}
-		return "", fmt.Errorf("stor %s: %w", remoteName, err)
-	}
+		c, err := ftp.Dial(addr, ftp.DialWithDialFunc(dialerWithKeepalive.Dial))
+		if err != nil {
+			lastErr = fmt.Errorf("connexion FTP: %w", err)
+			time.Sleep(time.Duration(attempt+1) * 2 * time.Second)
+			continue
+		}
+		stopWatch := watchdogFTP(ctx, c)
+		if err := c.Login(user, password); err != nil {
+			stopWatch()
+			_ = c.Quit()
+			lastErr = fmt.Errorf("login FTP: %w", err)
+			time.Sleep(time.Duration(attempt+1) * 2 * time.Second)
+			continue
+		}
+		if remotePath != "" && remotePath != "/" {
+			if err := c.ChangeDir(remotePath); err != nil {
+				stopWatch()
+				_ = c.Quit()
+				lastErr = fmt.Errorf("cd %s: %w", remotePath, err)
+				time.Sleep(time.Duration(attempt+1) * 2 * time.Second)
+				continue
+			}
+		}
 
-	if onProgress != nil {
-		onProgress(Progress{Percent: 100})
+		body := makeReader()
+		if body == nil {
+			stopWatch()
+			_ = c.Quit()
+			return "", fmt.Errorf("seek file failed at offset %d", sentBytes)
+		}
+
+		var storErr error
+		if sentBytes == 0 {
+			storErr = c.Stor(remoteName, body)
+		} else {
+			// Resume : continue à partir de sentBytes octets déjà envoyés
+			storErr = c.StorFrom(remoteName, body, uint64(sentBytes))
+		}
+		stopWatch()
+		_ = c.Quit()
+
+		if storErr == nil {
+			if onProgress != nil {
+				onProgress(Progress{Percent: 100})
+			}
+			return remoteName, nil
+		}
+		// Annulation user
+		if ctx != nil && ctx.Err() != nil {
+			return "", fmt.Errorf("annulé")
+		}
+		lastErr = fmt.Errorf("stor %s (attempt %d/%d, sent %d/%d bytes): %w",
+			remoteName, attempt+1, maxRetries, sentBytes, totalSize, storErr)
+		// Backoff progressif avant retry
+		time.Sleep(time.Duration(attempt+1) * 2 * time.Second)
 	}
-	return remoteName, nil
+	return "", lastErr
+}
+
+// counterReader compte les bytes lus pour tracker sentBytes même sans progress callback.
+type counterReader struct {
+	r     io.Reader
+	ctx   context.Context
+	count *int64
+}
+
+func (cr *counterReader) Read(p []byte) (int, error) {
+	if cr.ctx != nil {
+		if cerr := cr.ctx.Err(); cerr != nil {
+			return 0, cerr
+		}
+	}
+	n, err := cr.r.Read(p)
+	if n > 0 {
+		*cr.count += int64(n)
+	}
+	return n, err
 }
 
 // UploadFolder upload récursivement un dossier local vers FTP.
@@ -195,7 +297,7 @@ func UploadFolder(ctx context.Context, host string, port int, user, password, re
 	}
 
 	addr := fmt.Sprintf("%s:%d", host, port)
-	c, err := ftp.Dial(addr, ftp.DialWithTimeout(15*time.Second))
+	c, err := ftp.Dial(addr, ftp.DialWithDialFunc(dialerWithKeepalive.Dial))
 	if err != nil {
 		return "", fmt.Errorf("connexion FTP: %w", err)
 	}
@@ -258,6 +360,7 @@ func UploadFolder(ctx context.Context, host string, port int, user, password, re
 		if onProgress != nil {
 			body = &progressReader{
 				r:     f,
+				ctx:   ctx,
 				total: fileSize,
 				start: start,
 				onProgress: func(p Progress) {
@@ -312,7 +415,7 @@ func Delete(host string, port int, user, password, remotePath, remoteName string
 		port = 21
 	}
 	addr := fmt.Sprintf("%s:%d", host, port)
-	c, err := ftp.Dial(addr, ftp.DialWithTimeout(15*time.Second))
+	c, err := ftp.Dial(addr, ftp.DialWithDialFunc(dialerWithKeepalive.Dial))
 	if err != nil {
 		return fmt.Errorf("connexion FTP: %w", err)
 	}

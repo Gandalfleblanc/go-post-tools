@@ -1864,7 +1864,7 @@
 
                 <div class="ddl-step">
                   <div class="ddl-step-label">
-                    <span>1. {postUploadTypes.torrent_modo ? 'Upload FTP Modérateur' : 'Upload WebDAV NextCloud'}</span>
+                    <span>1. {postUploadTypes.torrent_modo ? 'Upload FTP Modérateur' : 'Upload FTP ma-seedbox'}</span>
                     <span class="ddl-bar-speed">{torrentState.ftpSpeed.toFixed(1)} MB/s · {torrentState.ftpPct.toFixed(0)}%</span>
                   </div>
                   <div class="progress-bar"><div class="progress-fill" style="width:{torrentState.ftpPct}%"></div></div>
