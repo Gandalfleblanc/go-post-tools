@@ -41,6 +41,7 @@ import (
 	"go-post-tools/internal/parser"
 	"go-post-tools/internal/qbittorrent"
 	"go-post-tools/internal/seedbox"
+	"go-post-tools/internal/sftpup"
 	"go-post-tools/internal/tester"
 	"go-post-tools/internal/tmdb"
 	"go-post-tools/internal/torrent"
@@ -55,7 +56,7 @@ import (
 // IMPORTANT : doit être en sync avec wails.json `productVersion`. Si tu bump
 // l'un, bump l'autre — sinon l'auto-update boucle (compare current=Version
 // vs latest=tag GitHub).
-const Version = "6.0.5"
+const Version = "6.1.0"
 
 type App struct {
 	ctx         context.Context
@@ -900,6 +901,10 @@ func (a *App) TestFTP(host string, port int, user, password string) tester.Resul
 
 func (a *App) TestSeedbox(url, user, password string) tester.Result {
 	return tester.TestSeedbox(url, user, password)
+}
+
+func (a *App) TestSFTP(host string, port int, user, password string) tester.Result {
+	return tester.TestSFTP(host, port, user, password)
 }
 
 func (a *App) TestQBit(url, user, password string) tester.Result {
@@ -2287,11 +2292,15 @@ func (a *App) pushTorrent(ctx context.Context, torrentPath, seedboxType string, 
 			}
 		})
 	}
-	// admin (ou "" → admin par défaut) → ruTorrent ma-seedbox.me
-	if a.cfg.SeedboxURL == "" {
-		return "", fmt.Errorf("seedbox ADMIN (ruTorrent) non configurée")
+	// admin (ou "" → admin par défaut) → qBittorrent ADMIN (Hetzner)
+	if a.cfg.QBitAdminURL == "" {
+		return "", fmt.Errorf("seedbox ADMIN (qBittorrent) non configurée")
 	}
-	return seedbox.Upload(ctx, a.cfg.SeedboxURL, a.cfg.SeedboxUser, a.cfg.SeedboxPassword, a.cfg.SeedboxLabel, torrentPath, onProgress)
+	return qbittorrent.Upload(ctx, a.cfg.QBitAdminURL, a.cfg.QBitAdminUser, a.cfg.QBitAdminPassword, a.cfg.SeedboxLabel, torrentPath, func(p qbittorrent.Progress) {
+		if onProgress != nil {
+			onProgress(seedbox.Progress{Percent: p.Percent, SpeedMB: p.SpeedMB})
+		}
+	})
 }
 
 // recheckTorrent force un recheck côté seedbox cible.
@@ -2311,11 +2320,11 @@ func (a *App) recheckTorrent(hash, seedboxType string) error {
 		}
 		return qbittorrent.Recheck(a.cfg.QBitURL, a.cfg.QBitUser, a.cfg.QBitPassword, hash)
 	}
-	// admin (ou "") → ruTorrent
-	if a.cfg.SeedboxURL == "" {
-		return fmt.Errorf("seedbox ADMIN non configurée")
+	// admin (ou "") → qBittorrent ADMIN
+	if a.cfg.QBitAdminURL == "" {
+		return fmt.Errorf("seedbox ADMIN (qBittorrent) non configurée")
 	}
-	return rutorrent.Recheck(a.cfg.SeedboxURL, a.cfg.SeedboxUser, a.cfg.SeedboxPassword, hash)
+	return qbittorrent.Recheck(a.cfg.QBitAdminURL, a.cfg.QBitAdminUser, a.cfg.QBitAdminPassword, hash)
 }
 
 // seedboxConfigured indique si au moins une seedbox team-shared est configurée
@@ -2686,12 +2695,114 @@ func (a *App) GetNexumIndex() (NexumIndex, error) {
 	return idx, nil
 }
 
-// TestNexum : ping /api/v1/me pour vérifier que la clé est valide.
-func (a *App) TestNexum() (string, error) {
+// GetSeedboxNexumIndex : approche seedbox-first.
+//   1. Liste les torrents présents sur la seedbox (rutorrent.List → hash + nom)
+//   2. Pour chaque torrent seedbox, demande à Nexum : `?info_hash=<hash>` (lookup direct)
+//      avec fallback search par nom si le hash ne match pas
+//   3. Construit l'index { "h:<seedbox_hash>": nexum.Torrent, "n:<name>": nexum.Torrent }
+// Avantage vs GetNexumIndex : pas besoin de pull tout le catalogue Nexum,
+// on scanne uniquement ce qui est sur ta seedbox (les .torrent Nexum y sont aussi).
+func (a *App) GetSeedboxNexumIndex() (NexumIndex, error) {
 	if a.cfg.NexumApiKey == "" {
-		return "", fmt.Errorf("clé API Nexum manquante")
+		return nil, fmt.Errorf("clé API Nexum manquante")
+	}
+	if a.cfg.SeedboxURL == "" {
+		return nil, fmt.Errorf("seedbox ruTorrent non configurée")
+	}
+	sbTorrents, err := rutorrent.List(a.cfg.SeedboxURL, a.cfg.SeedboxUser, a.cfg.SeedboxPassword)
+	if err != nil {
+		return nil, fmt.Errorf("seedbox list: %w", err)
 	}
 	c := nexum.NewClient(a.cfg.NexumApiKey, a.cfg.NexumBaseURL)
+	idx := make(NexumIndex, len(sbTorrents)*4)
+	var lookupErr error
+	matched := 0
+	for _, sb := range sbTorrents {
+		if sb.Hash == "" {
+			continue
+		}
+		nt, err := c.ByInfoHash(sb.Hash)
+		if err != nil {
+			if lookupErr == nil {
+				lookupErr = err
+			}
+			continue
+		}
+		if nt == nil {
+			continue
+		}
+		matched++
+		// Index par tous les noms possibles pour maximiser les chances de match
+		// avec un torrent Hydracker (dont le nom peut différer légèrement)
+		idx["h:"+strings.ToLower(sb.Hash)] = *nt
+		if nt.InfoHash != "" {
+			idx["h:"+strings.ToLower(nt.InfoHash)] = *nt
+		}
+		if sb.Name != "" {
+			idx["n:"+normalizeName(sb.Name)] = *nt
+		}
+		if sb.FileName != "" {
+			// Strip extension éventuelle (.mkv, .mp4, etc)
+			name := sb.FileName
+			if dot := strings.LastIndex(name, "."); dot > 0 {
+				name = name[:dot]
+			}
+			idx["n:"+normalizeName(name)] = *nt
+		}
+		if nt.Name != "" {
+			idx["n:"+normalizeName(nt.Name)] = *nt
+		}
+	}
+	if matched == 0 && lookupErr != nil {
+		return nil, fmt.Errorf("aucun torrent matché sur Nexum (sur %d seedbox) — 1re erreur: %w", len(sbTorrents), lookupErr)
+	}
+	return idx, nil
+}
+
+// DebugNexumMatch : pour diagnostic UI. Prend un nom + hash Hydracker, renvoie
+// les keys d'index Nexum qui matchent (ou les keys "proches" pour comprendre
+// pourquoi ça ne match pas). Échantillonne aussi 5 keys de l'index pour comparer.
+type NexumDebug struct {
+	HydHashLower    string   `json:"hyd_hash_lower"`
+	HydNameNorm     string   `json:"hyd_name_norm"`
+	HashKeyExists   bool     `json:"hash_key_exists"`
+	NameKeyExists   bool     `json:"name_key_exists"`
+	IndexHashCount  int      `json:"index_hash_count"`
+	IndexNameCount  int      `json:"index_name_count"`
+	SampleNameKeys  []string `json:"sample_name_keys"`
+}
+
+func (a *App) DebugNexumMatch(idx NexumIndex, hydName, hydHash string) NexumDebug {
+	d := NexumDebug{
+		HydHashLower: strings.ToLower(hydHash),
+		HydNameNorm:  normalizeName(hydName),
+	}
+	if d.HydHashLower != "" {
+		_, d.HashKeyExists = idx["h:"+d.HydHashLower]
+	}
+	if d.HydNameNorm != "" {
+		_, d.NameKeyExists = idx["n:"+d.HydNameNorm]
+	}
+	for k := range idx {
+		if strings.HasPrefix(k, "h:") {
+			d.IndexHashCount++
+		} else if strings.HasPrefix(k, "n:") {
+			d.IndexNameCount++
+			if len(d.SampleNameKeys) < 5 {
+				d.SampleNameKeys = append(d.SampleNameKeys, k)
+			}
+		}
+	}
+	return d
+}
+
+// TestNexum : ping /api/v1/me pour vérifier que la clé est valide.
+// Prend la clé + baseURL en paramètres (depuis le form non sauvegardé), pas a.cfg.
+func (a *App) TestNexum(apiKey, baseURL string) (string, error) {
+	if apiKey == "" {
+		return "", fmt.Errorf("clé API Nexum manquante")
+	}
+	c := nexum.NewClient(apiKey, baseURL)
 	info, err := c.Me()
 	if err != nil {
 		return "", err
@@ -2737,7 +2848,8 @@ type DeleteTorrentResult struct {
 	FTPDeleted      []string `json:"ftp_deleted"`
 	FTPErrors       []string `json:"ftp_errors"`
 	FilesAttempted  []string `json:"files_attempted"`
-	UsedFTP         string   `json:"used_ftp"` // "perso", "mod" ou "" si rien trouvé
+	UsedFTP         string   `json:"used_ftp"`     // "perso", "mod" ou "" si rien trouvé
+	SiblingsErased  []string `json:"siblings_erased"` // hashes des .torrent siblings (Nexum etc) effacés par nom
 }
 
 // DeleteTorrentAndFTP : suppression complète d'un torrent.
@@ -2747,7 +2859,7 @@ type DeleteTorrentResult struct {
 //   4. DELETE /torrents/{id} sur Hydracker
 // Idempotent : un fichier déjà absent (550) est traité comme succès.
 func (a *App) DeleteTorrentAndFTP(torrentID int) (*DeleteTorrentResult, error) {
-	result := &DeleteTorrentResult{FTPDeleted: []string{}, FTPErrors: []string{}, FilesAttempted: []string{}}
+	result := &DeleteTorrentResult{FTPDeleted: []string{}, FTPErrors: []string{}, FilesAttempted: []string{}, SiblingsErased: []string{}}
 
 	// 1. Récupère le .torrent
 	torrentURL := fmt.Sprintf("%s/torrents/%d/download", a.client.BaseURL(), torrentID)
@@ -2838,13 +2950,109 @@ func (a *App) DeleteTorrentAndFTP(torrentID int) (*DeleteTorrentResult, error) {
 		result.UsedFTP = "mod"
 	}
 
-	// 4. DELETE Hydracker
-	if err := a.client.DeleteTorrent(torrentID); err != nil {
-		result.HydrackerErr = err.Error()
-		return result, fmt.Errorf("delete hydracker: %w", err)
+	// 4. Supprimer le torrent de la seedbox (rutorrent/qbit) — utilise l'info_hash
+	// extrait du .torrent. NE TOUCHE PAS au post Hydracker.
+	hash := mi.HashInfoBytes().HexString()
+	if hash != "" {
+		if seedboxErr := a.deleteSeedboxAllTargets(hash); seedboxErr == nil {
+			result.SeedboxOK = true
+		} else {
+			result.SeedboxErr = seedboxErr.Error()
+		}
 	}
-	result.HydrackerOK = true
+
+	// 5. Vire aussi les siblings rutorrent (.torrent Nexum etc) qui ont le MÊME
+	// nom de release (donc même fichier .mkv) mais un hash différent. Sans ça,
+	// après une suppression Hydracker le .torrent Nexum reste orphelin sur la
+	// seedbox (le .mkv a été supprimé via FTP).
+	if a.cfg.SeedboxURL != "" && info.Name != "" {
+		targetNorm := normalizeName(info.Name)
+		hydHashLower := strings.ToLower(hash)
+		if list, lerr := rutorrent.List(a.cfg.SeedboxURL, a.cfg.SeedboxUser, a.cfg.SeedboxPassword); lerr == nil {
+			for _, sb := range list {
+				sbHashLower := strings.ToLower(sb.Hash)
+				if sbHashLower == "" || sbHashLower == hydHashLower {
+					continue
+				}
+				// Match par nom OU par filename (sans extension)
+				match := false
+				if sb.Name != "" && normalizeName(sb.Name) == targetNorm {
+					match = true
+				}
+				if !match && sb.FileName != "" {
+					fn := sb.FileName
+					if dot := strings.LastIndex(fn, "."); dot > 0 {
+						fn = fn[:dot]
+					}
+					if normalizeName(fn) == targetNorm {
+						match = true
+					}
+				}
+				if !match {
+					continue
+				}
+				if eerr := rutorrent.Erase(a.cfg.SeedboxURL, a.cfg.SeedboxUser, a.cfg.SeedboxPassword, sb.Hash); eerr == nil {
+					result.SiblingsErased = append(result.SiblingsErased, sb.Hash)
+				}
+			}
+		}
+	}
+
+	// Le post Hydracker reste intact volontairement (le user veut nettoyer sa
+	// seedbox + FTP sans toucher à la fiche communautaire).
 	return result, nil
+}
+
+// deleteSeedboxAllTargets tente la suppression sur TOUS les seedboxes
+// configurés (ruTorrent ADMIN + qBit MODO + privés). Pas de return early :
+// rutorrent.Erase est idempotent (renvoie nil même si torrent absent), donc
+// on l'appellerait sans toucher à qBit. On veut que TOUS les seedboxes soient
+// purgés du hash → on appelle tous + on collecte les erreurs.
+//
+// Retourne nil si au moins un seedbox a tenté la suppression sans erreur HTTP.
+func (a *App) deleteSeedboxAllTargets(hash string) error {
+	var errs []string
+	tried := false
+	tryOK := false
+	if a.cfg.SeedboxURL != "" {
+		tried = true
+		if err := rutorrent.Erase(a.cfg.SeedboxURL, a.cfg.SeedboxUser, a.cfg.SeedboxPassword, hash); err == nil {
+			tryOK = true
+		} else {
+			errs = append(errs, "ruTorrent ADMIN: "+err.Error())
+		}
+	}
+	if a.cfg.QBitURL != "" {
+		tried = true
+		if err := qbittorrent.Delete(a.cfg.QBitURL, a.cfg.QBitUser, a.cfg.QBitPassword, hash, false); err == nil {
+			tryOK = true
+		} else {
+			errs = append(errs, "qBit MODO: "+err.Error())
+		}
+	}
+	if a.cfg.PrivateSeedboxURL != "" {
+		tried = true
+		if err := rutorrent.Erase(a.cfg.PrivateSeedboxURL, a.cfg.PrivateSeedboxUser, a.cfg.PrivateSeedboxPassword, hash); err == nil {
+			tryOK = true
+		} else {
+			errs = append(errs, "ruTorrent privé: "+err.Error())
+		}
+	}
+	if a.cfg.PrivateQBitURL != "" {
+		tried = true
+		if err := qbittorrent.Delete(a.cfg.PrivateQBitURL, a.cfg.PrivateQBitUser, a.cfg.PrivateQBitPassword, hash, false); err == nil {
+			tryOK = true
+		} else {
+			errs = append(errs, "qBit privé: "+err.Error())
+		}
+	}
+	if !tried {
+		return fmt.Errorf("aucune seedbox configurée")
+	}
+	if !tryOK {
+		return fmt.Errorf("toutes les suppressions ont échoué : %s", strings.Join(errs, " | "))
+	}
+	return nil
 }
 
 // UpdateMyLien — PUT sur /liens/{id} avec les champs modifiables.
@@ -3573,10 +3781,10 @@ func (a *App) PostTorrentWorkflow(titleID, qualite int, langues, subs []string, 
 		}
 	default: // admin
 		if a.cfg.FTPHost == "" || a.cfg.FTPUser == "" {
-			return nil, fmt.Errorf("FTP ADMIN non configuré — renseignez les Réglages")
+			return nil, fmt.Errorf("SFTP ADMIN non configuré — renseignez les Réglages")
 		}
-		if a.cfg.SeedboxURL == "" {
-			return nil, fmt.Errorf("seedbox ADMIN (ruTorrent) non configurée — renseignez les Réglages")
+		if a.cfg.QBitAdminURL == "" {
+			return nil, fmt.Errorf("seedbox ADMIN (qBittorrent) non configurée — renseignez les Réglages")
 		}
 	}
 	if a.cfg.TrackerURL == "" {
@@ -3620,24 +3828,49 @@ func (a *App) PostTorrentWorkflow(titleID, qualite int, langues, subs []string, 
 		emit("ftp", "Upload FTP Privé…")
 	default: // "admin" ou ""
 		ftpHost, ftpPort, ftpUser, ftpPass, ftpPath = a.cfg.FTPHost, a.cfg.FTPPort, a.cfg.FTPUser, a.cfg.FTPPassword, a.cfg.FTPPath
-		emit("ftp", "Upload FTP ADMIN…")
+		emit("ftp", "Upload SFTP Hetzner…")
 	}
 	var remoteName string
 	var uploadErr error
-	if isFolder {
-		emit("ftp", fmt.Sprintf("Upload FTP %s (dossier saison)…", strings.ToUpper(seedboxType)))
-		remoteName, uploadErr = ftpup.UploadFolder(a.workContext(), ftpHost, ftpPort, ftpUser, ftpPass, ftpPath, mkvPath, func(p ftpup.Progress) {
-			wailsruntime.EventsEmit(a.ctx, "torrent:ftp", p)
-		})
+	// Workflow ADMIN : SFTP forcé (Hetzner via SSH, pas de FTP).
+	// Pour MODO/PRIVE on respecte le toggle utilisateur.
+	useSFTP := (seedboxType == "admin" || seedboxType == "") || a.cfg.FTPUseSFTP
+	if useSFTP {
+		sftpPort := ftpPort
+		if sftpPort == 21 || sftpPort == 0 {
+			sftpPort = 22 // override port FTP standard → port SFTP standard
+		}
+		if isFolder {
+			emit("ftp", fmt.Sprintf("Upload SFTP %s (dossier saison)…", ftpHost))
+			remoteName, uploadErr = sftpup.UploadFolder(a.workContext(), ftpHost, sftpPort, ftpUser, ftpPass, ftpPath, mkvPath, func(p sftpup.Progress) {
+				wailsruntime.EventsEmit(a.ctx, "torrent:ftp", p)
+			})
+		} else {
+			emit("ftp", fmt.Sprintf("Upload SFTP %s…", ftpHost))
+			remoteName, uploadErr = sftpup.Upload(a.workContext(), ftpHost, sftpPort, ftpUser, ftpPass, ftpPath, mkvPath, func(p sftpup.Progress) {
+				wailsruntime.EventsEmit(a.ctx, "torrent:ftp", p)
+			})
+		}
+		if uploadErr != nil {
+			return nil, fmt.Errorf("sftp: %w", uploadErr)
+		}
+		emit("ftp_done", fmt.Sprintf("SFTP OK : %s", remoteName))
 	} else {
-		remoteName, uploadErr = ftpup.Upload(a.workContext(), ftpHost, ftpPort, ftpUser, ftpPass, ftpPath, mkvPath, func(p ftpup.Progress) {
-			wailsruntime.EventsEmit(a.ctx, "torrent:ftp", p)
-		})
+		if isFolder {
+			emit("ftp", fmt.Sprintf("Upload FTP %s (dossier saison)…", strings.ToUpper(seedboxType)))
+			remoteName, uploadErr = ftpup.UploadFolder(a.workContext(), ftpHost, ftpPort, ftpUser, ftpPass, ftpPath, mkvPath, func(p ftpup.Progress) {
+				wailsruntime.EventsEmit(a.ctx, "torrent:ftp", p)
+			})
+		} else {
+			remoteName, uploadErr = ftpup.Upload(a.workContext(), ftpHost, ftpPort, ftpUser, ftpPass, ftpPath, mkvPath, func(p ftpup.Progress) {
+				wailsruntime.EventsEmit(a.ctx, "torrent:ftp", p)
+			})
+		}
+		if uploadErr != nil {
+			return nil, fmt.Errorf("ftp: %w", uploadErr)
+		}
+		emit("ftp_done", fmt.Sprintf("FTP OK : %s", remoteName))
 	}
-	if uploadErr != nil {
-		return nil, fmt.Errorf("ftp: %w", uploadErr)
-	}
-	emit("ftp_done", fmt.Sprintf("FTP OK : %s", remoteName))
 
 	// 2. Créer le .torrent (.torrent placé à côté de la source — sortie du folder
 	// pour ne pas être inclus dans le hashing).

@@ -11,6 +11,7 @@ import (
 
 	"go-post-tools/internal/nextcloud"
 	"go-post-tools/internal/seedbox"
+	"go-post-tools/internal/sftpup"
 	"go-post-tools/internal/webdav"
 )
 
@@ -152,6 +153,20 @@ func TestFTP(host string, port int, user, password string) Result {
 		return fail(err)
 	}
 	return ok("Connexion FTP réussie")
+}
+
+// TestSFTP : ping SSH + ouverture client SFTP + ReadDir("/").
+func TestSFTP(host string, port int, user, password string) Result {
+	if host == "" {
+		return fail(fmt.Errorf("host manquant"))
+	}
+	if port <= 0 {
+		port = 22
+	}
+	if err := sftpup.Ping(host, port, user, password); err != nil {
+		return fail(err)
+	}
+	return ok("Connexion SFTP réussie")
 }
 
 func TestSeedbox(url, user, password string) Result {

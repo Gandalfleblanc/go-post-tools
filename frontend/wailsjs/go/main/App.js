@@ -46,6 +46,10 @@ export function ClearSeedboxSettingsPassword(arg1) {
   return window['go']['main']['App']['ClearSeedboxSettingsPassword'](arg1);
 }
 
+export function DebugNexumMatch(arg1, arg2, arg3) {
+  return window['go']['main']['App']['DebugNexumMatch'](arg1, arg2, arg3);
+}
+
 export function DeleteLien(arg1) {
   return window['go']['main']['App']['DeleteLien'](arg1);
 }
@@ -156,6 +160,10 @@ export function GetNexumIndex() {
 
 export function GetNzbFilenames(arg1) {
   return window['go']['main']['App']['GetNzbFilenames'](arg1);
+}
+
+export function GetSeedboxNexumIndex() {
+  return window['go']['main']['App']['GetSeedboxNexumIndex']();
 }
 
 export function GetTeamConfig() {
@@ -426,8 +434,8 @@ export function TestNextcloud(arg1, arg2, arg3) {
   return window['go']['main']['App']['TestNextcloud'](arg1, arg2, arg3);
 }
 
-export function TestNexum() {
-  return window['go']['main']['App']['TestNexum']();
+export function TestNexum(arg1, arg2) {
+  return window['go']['main']['App']['TestNexum'](arg1, arg2);
 }
 
 export function TestOneFichier(arg1) {
@@ -436,6 +444,10 @@ export function TestOneFichier(arg1) {
 
 export function TestQBit(arg1, arg2, arg3) {
   return window['go']['main']['App']['TestQBit'](arg1, arg2, arg3);
+}
+
+export function TestSFTP(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['TestSFTP'](arg1, arg2, arg3, arg4);
 }
 
 export function TestSeedbox(arg1, arg2, arg3) {

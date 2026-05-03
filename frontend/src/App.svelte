@@ -6,7 +6,7 @@
   import { logEntries, addLog, clearLogs } from './logs.js'
   import logo from './assets/logo.png'
   import loginLogo from './assets/login-logo.png'
-  import { ListCheckTorrents, ReseedFromLihdl, ReseedPrepare, ReseedExecute, SelectAnyTorrentFile, SelectMkvFile, GetVersion, StartWatchFolder, StopWatchFolder, IsWatching, CheckForUpdate, OpenBrowser, HistoryList, HistoryDelete, HistoryStats, DownloadUpdate, HasLihdlSettingsPassword, SetLihdlSettingsPassword, VerifyLihdlSettingsPassword, ClearLihdlSettingsPassword, IsLihdlPasswordManaged, IsHydrackerURLManaged, GetEffectiveHydrackerURL, FindHydrackerSources, FicheGetContent, FicheGetNfo, GetDDLFilename, GetUploaderStats, LoginUser, Logout, GetCurrentUser, TryAutoLogin, HashPassword, GetTeamConfig, BuildTeamJSON, FetchHydrackerAvatar, ChangeMyPassword, GetNzbFilenames, DeleteSeedboxByHash, MediaSearch, HydrackerSearch, TMDBGetByImdbID, TMDBGetProviders, HydrackerGetByID, HydrackerGetByTmdbID, HydrackerGetLienByID, HydrackerGetLienDetailByID, GetDDLFilenameByLienID, DownloadToDownloads, AutoReseedFromHydracker, AutoReseedDDLFromHydracker, AutoReseedFullFromTorrent, ListReseedRequests, ListMyLiens, ListMyTorrents, DeleteMyLien, DeleteMyTorrent, DeleteMyNzb, DeleteTorrentAndFTP, ListSeedboxHashes, GetNexumIndex, TestNexum, UpdateMyLien, UpdateMyTorrent, GetMetaQualities, ListTitlesSorted, GetUserProfile, ParseFilename, Notify } from '../wailsjs/go/main/App.js'
+  import { ListCheckTorrents, ReseedFromLihdl, ReseedPrepare, ReseedExecute, SelectAnyTorrentFile, SelectMkvFile, GetVersion, StartWatchFolder, StopWatchFolder, IsWatching, CheckForUpdate, OpenBrowser, HistoryList, HistoryDelete, HistoryStats, DownloadUpdate, HasLihdlSettingsPassword, SetLihdlSettingsPassword, VerifyLihdlSettingsPassword, ClearLihdlSettingsPassword, IsLihdlPasswordManaged, IsHydrackerURLManaged, GetEffectiveHydrackerURL, FindHydrackerSources, FicheGetContent, FicheGetNfo, GetDDLFilename, GetUploaderStats, LoginUser, Logout, GetCurrentUser, TryAutoLogin, HashPassword, GetTeamConfig, BuildTeamJSON, FetchHydrackerAvatar, ChangeMyPassword, GetNzbFilenames, DeleteSeedboxByHash, MediaSearch, HydrackerSearch, TMDBGetByImdbID, TMDBGetProviders, HydrackerGetByID, HydrackerGetByTmdbID, HydrackerGetLienByID, HydrackerGetLienDetailByID, GetDDLFilenameByLienID, DownloadToDownloads, AutoReseedFromHydracker, AutoReseedDDLFromHydracker, AutoReseedFullFromTorrent, ListReseedRequests, ListMyLiens, ListMyTorrents, DeleteMyLien, DeleteMyTorrent, DeleteMyNzb, DeleteTorrentAndFTP, ListSeedboxHashes, GetNexumIndex, GetSeedboxNexumIndex, DebugNexumMatch, TestNexum, TestSFTP, UpdateMyLien, UpdateMyTorrent, GetMetaQualities, ListTitlesSorted, GetUserProfile, ParseFilename, Notify } from '../wailsjs/go/main/App.js'
 
   // --- Tabs (réorganisés par workflow, 8 onglets principaux) ---
   const TABS = [
@@ -340,7 +340,7 @@
     usenet_user: '', usenet_password: '', usenet_connections: 20,
     usenet_group: 'alt.binaries.test',
     parpar_redundancy: 5, parpar_threads: 8, parpar_slice_size: 768000,
-    ftp_host: '', ftp_port: 21, ftp_user: '', ftp_password: '', ftp_path: '',
+    ftp_host: '', ftp_port: 21, ftp_user: '', ftp_password: '', ftp_path: '', ftp_use_sftp: false,
     private_ftp_host: '', private_ftp_port: 21, private_ftp_user: '', private_ftp_password: '', private_ftp_path: '',
     seedbox_url: '', seedbox_user: '', seedbox_password: '', seedbox_label: '',
     private_seedbox_url: '', private_seedbox_user: '', private_seedbox_password: '', private_seedbox_label: '',
@@ -1031,6 +1031,71 @@
     }
   }
 
+  // normalizeName : strip . _ - espaces, lower → match robuste Hydracker ↔ Nexum
+  // (les 2 trackers recalculent le hash différemment car ils remplacent l'announce)
+  function normalizeNameJS(s) {
+    if (!s) return ''
+    return String(s).toLowerCase().replace(/[^a-z0-9]/g, '')
+  }
+
+  let nexumLoading = false
+  let nexumError = ''
+
+  async function loadNexumIndex(silent = false) {
+    if (!cfg.nexum_api_key) { nexumLoaded = false; nexumIndex = {}; return }
+    nexumLoading = true
+    nexumError = ''
+    try {
+      // Approche seedbox-first : on scanne UNIQUEMENT les torrents que t'as sur ta seedbox
+      // (les .torrent Nexum y sont aussi puisque même seedbox), pour chacun on demande
+      // à Nexum les stats par info_hash. Beaucoup + rapide qu'un pull catalogue Nexum entier.
+      const idx = await GetSeedboxNexumIndex()
+      nexumIndex = idx || {}
+      nexumLoaded = true
+      const count = Object.keys(nexumIndex).filter(k => k.startsWith('h:')).length
+      if (!silent) addLog('SEED', `📡 Nexum : ${count} torrents matchés via seedbox`)
+    } catch(e) {
+      nexumLoaded = false
+      nexumError = String(e?.message || e)
+      if (!silent) addLog('SEED', `⚠ Nexum index indispo : ${nexumError}`)
+    }
+    nexumLoading = false
+  }
+
+  async function debugNexumFirst() {
+    if (!nexumLoaded || !mySeedsTorrents.length) return
+    const t = mySeedsTorrents[0]
+    const name = t.torrent_name || t.name || ''
+    const hash = t.info_hash || t.hash || ''
+    addLog('SEED', `🔬 Debug t[0]: name="${name}" hash="${hash}"`)
+    try {
+      const d = await DebugNexumMatch(nexumIndex, name, hash)
+      addLog('SEED', `🔬 hashLower=${d.hyd_hash_lower} nameNorm=${d.hyd_name_norm}`)
+      addLog('SEED', `🔬 hashKeyExists=${d.hash_key_exists} nameKeyExists=${d.name_key_exists}`)
+      addLog('SEED', `🔬 index: ${d.index_hash_count} hash keys, ${d.index_name_count} name keys`)
+      addLog('SEED', `🔬 sample names: ${(d.sample_name_keys||[]).join(' | ')}`)
+    } catch(e) {
+      addLog('SEED', `🔬 debug err: ${e}`)
+    }
+  }
+
+  // nexumLookup : tente match par info_hash, fallback nom normalisé.
+  // Retourne {seeders, leechers, id, name} ou null.
+  function nexumLookup(t) {
+    if (!nexumLoaded) return null
+    const h = (t.info_hash || t.hash || '').toLowerCase()
+    if (h) {
+      const m = nexumIndex['h:' + h]
+      if (m) return m
+    }
+    const name = t.torrent_name || t.name || ''
+    if (name) {
+      const m = nexumIndex['n:' + normalizeNameJS(name)]
+      if (m) return m
+    }
+    return null
+  }
+
   $: filteredMySeeds = mySeedsTorrents.filter(t => {
     // Filtre 1 : présent sur ta seedbox (si toggle activé et liste chargée)
     if (onlyMine && seedboxHashesLoaded) {
@@ -1104,8 +1169,12 @@
     try {
       const r = await DeleteTorrentAndFTP(t.id)
       deleteTorrentModal = { ...deleteTorrentModal, loading: false, result: r }
-      addLog('DEL', `✓ Hydracker OK · FTP ${r.used_ftp || 'rien trouvé'} · ${r.ftp_deleted?.length || 0} fichier(s) supprimé(s)`)
+      addLog('DEL', `✓ FTP ${r.used_ftp || 'rien trouvé'} · ${r.ftp_deleted?.length || 0} fichier(s) supprimé(s) · seedbox ${r.seedbox_ok ? 'OK' : 'KO'}${r.siblings_erased?.length ? ' · ' + r.siblings_erased.length + ' sibling(s) effacé(s)' : ''}`)
       try { Notify('🗑 Torrent supprimé', t.torrent_name || t.name || ('#' + t.id)) } catch(e) {}
+      // Retire l'item de toutes les listes possibles (My Seeds, Check Torrent, Top Seeds)
+      mySeedsTorrents = mySeedsTorrents.filter(x => x.id !== t.id)
+      checkTorrents = checkTorrents.filter(x => x.id !== t.id && x.hash !== t.hash)
+      topSeedsTorrents = topSeedsTorrents.filter(x => x.id !== t.id)
       setTimeout(loadMySeeds, 1500)
     } catch(e) {
       deleteTorrentModal = { ...deleteTorrentModal, loading: false, error: String(e?.message || e) }
@@ -1575,20 +1644,23 @@
   async function bulkDeleteSelected() {
     const hashes = [...checkSelected]
     if (!hashes.length) return
-    const total = hashes.length
-    if (!confirm(`Supprimer ${total} torrent(s) de la seedbox ? (Hydracker n'est pas affecté)`)) return
+    // Récupère les torrents complets correspondants (avec ID Hydracker)
+    const targets = checkTorrents.filter(t => checkSelected.has(t.hash))
+    const total = targets.length
+    if (!total) return
+    if (!confirm(`Supprimer ${total} torrent(s) : .torrent de la seedbox + .mkv sur FTP ?\n(Le post Hydracker reste intact)`)) return
     checkDeleting = true
     checkDeleteResult = ''
     let ok = 0, errs = []
-    for (const h of hashes) {
+    for (const t of targets) {
       try {
-        await DeleteSeedboxByHash(h)
+        if (!t.id) throw new Error('ID Hydracker manquant')
+        await DeleteTorrentAndFTP(t.id)
         ok++
-        // Retire de la liste localement (effet immédiat)
-        checkTorrents = checkTorrents.filter(t => t.hash !== h)
-        checkSelected.delete(h)
+        checkTorrents = checkTorrents.filter(x => x.hash !== t.hash)
+        checkSelected.delete(t.hash)
       } catch (e) {
-        errs.push(`${h.slice(0,8)}: ${String(e?.message || e).replace(/^Error:\s*/, '')}`)
+        errs.push(`${(t.torrent_name || t.name || '#'+t.id).slice(0,40)}: ${String(e?.message || e).replace(/^Error:\s*/, '')}`)
       }
     }
     checkSelected = new Set(checkSelected)
@@ -2983,18 +3055,18 @@
                 <div class="modal-hint">{deleteTorrentModal.torrent.torrent_name || deleteTorrentModal.torrent.name || '#' + deleteTorrentModal.torrent.id}</div>
                 <div style="margin:14px 0;font-size:12px;line-height:1.5;color:var(--text2)">
                   Cette action va :<br>
-                  1️⃣ Supprimer le torrent <b>#{deleteTorrentModal.torrent.id}</b> sur Hydracker (DELETE)<br>
-                  2️⃣ Récupérer le .torrent + parser les fichiers<br>
-                  3️⃣ Supprimer le(s) fichier(s) sur ton FTP perso (puis FTP mod en fallback)<br>
+                  1️⃣ Supprimer le(s) <b>.mkv</b> sur le FTP (perso puis mod en fallback)<br>
+                  2️⃣ Supprimer le <b>.torrent</b> de ta seedbox (rutorrent / qBit)<br>
                   <br>
-                  <span style="color:#ff9585">⚠ Irréversible.</span>
+                  <span style="color:#7ef0c0">✓ Le post Hydracker reste intact</span> (fiche communautaire préservée).<br>
+                  <span style="color:#ff9585">⚠ Irréversible côté seedbox/FTP.</span>
                 </div>
                 {#if deleteTorrentModal.error}
                   <div style="color:#ff6b6b;font-size:12px;margin:10px 0">⚠ {deleteTorrentModal.error}</div>
                 {/if}
-                <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px">
-                  <button class="btn-test" on:click={closeDeleteTorrentModal} disabled={deleteTorrentModal.loading}>Annuler</button>
-                  <button class="btn-save" style="background:#7a1c1c;color:#fff" on:click={confirmDeleteTorrent} disabled={deleteTorrentModal.loading}>
+                <div style="display:flex;gap:8px;justify-content:flex-end;align-items:center;margin-top:14px">
+                  <button class="btn-test" style="margin:0;padding:10px 18px;font-size:13px;font-weight:600;letter-spacing:0.3px;text-transform:none;line-height:1.2" on:click={closeDeleteTorrentModal} disabled={deleteTorrentModal.loading}>Annuler</button>
+                  <button class="btn-save" style="margin:0;background:#7a1c1c;color:#fff;padding:10px 18px;font-size:13px;font-weight:600;letter-spacing:0.3px;line-height:1.2" on:click={confirmDeleteTorrent} disabled={deleteTorrentModal.loading}>
                     {deleteTorrentModal.loading ? '⏳ Suppression…' : '🗑 Confirmer la suppression'}
                   </button>
                 </div>
@@ -3170,7 +3242,7 @@
                   {/if}
                   <button class="btn-test" on:click={clearCheckSelection}>Désélectionner</button>
                   <button class="btn-bulk-delete" on:click={bulkDeleteSelected} disabled={checkDeleting}>
-                    {checkDeleting ? '⏳ Suppression…' : `🗑 Supprimer ${checkSelected.size} torrent(s)`}
+                    {checkDeleting ? '⏳ Suppression…' : `🗑 Supprimer ${checkSelected.size} torrent(s) + FTP`}
                   </button>
                 </div>
               </div>
@@ -3787,6 +3859,27 @@
             </div>
           </div>
 
+          <div class="section">
+            <div class="section-header">
+              <span>Nexum</span>
+              <button class="btn-test" on:click={() => runTest('nexum', async () => ({ ok: true, message: await TestNexum(cfg.nexum_api_key, cfg.nexum_base_url) }))}>
+                {#if testLoading.nexum}…{:else}Tester{/if}
+              </button>
+            </div>
+            {#if testResults.nexum}
+              <div class="test-result" class:ok={testResults.nexum.ok}>{testResults.nexum.message}</div>
+            {/if}
+            <div class="field">
+              <label>Clé API Nexum</label>
+              <input type="password" bind:value={cfg.nexum_api_key} placeholder="X-API-Key" />
+              <div class="field-hint">Permet d'afficher les seeds Nexum à côté de ceux Hydracker dans Check Torrent.</div>
+            </div>
+            <div class="field">
+              <label>URL de base Nexum</label>
+              <input type="text" bind:value={cfg.nexum_base_url} placeholder="https://nexum-core.com" />
+            </div>
+          </div>
+
           <!-- ===== Configuration ===== -->
           <div style="font-size:11px;color:var(--text3);margin:18px 0 8px;text-transform:uppercase;letter-spacing:0.5px">⚙️ Configuration</div>
 
@@ -3896,12 +3989,12 @@
             </div>
           </div>
 
-          <!-- FTP RUTORRENT ADMIN (ma-seedbox.me — workflow Torrent ADMIN) -->
+          <!-- SFTP ADMIN Hetzner (workflow Torrent ADMIN) -->
           <div class="section">
             <div class="section-header">
-              <span>FTP ADMIN (ma-seedbox.me)</span>
-              <button class="btn-test" on:click={() => runTest('ftp', () => TestFTP(cfg.ftp_host, cfg.ftp_port, cfg.ftp_user, cfg.ftp_password))}>
-                {#if testLoading.ftp}…{:else}Tester{/if}
+              <span>SFTP ADMIN (Hetzner)</span>
+              <button class="btn-test" on:click={() => runTest('ftp', () => TestSFTP(cfg.ftp_host, cfg.ftp_port || 22, cfg.ftp_user, cfg.ftp_password))}>
+                {#if testLoading.ftp}…{:else}Tester SFTP{/if}
               </button>
             </div>
             {#if testResults.ftp}
@@ -3909,12 +4002,12 @@
             {/if}
             <div class="fields-grid">
               <div class="field">
-                <label for="ftp-host">Hôte</label>
-                <input id="ftp-host" type="text" bind:value={cfg.ftp_host} placeholder="ftp.example.com" />
+                <label for="ftp-host">Hôte SFTP</label>
+                <input id="ftp-host" type="text" bind:value={cfg.ftp_host} placeholder="hetzner-host.example.com" />
               </div>
               <div class="field">
                 <label for="ftp-port">Port</label>
-                <input id="ftp-port" type="number" bind:value={cfg.ftp_port} />
+                <input id="ftp-port" type="number" bind:value={cfg.ftp_port} placeholder="22" />
               </div>
               <div class="field">
                 <label for="ftp-user">Utilisateur</label>
@@ -3931,36 +4024,36 @@
             </div>
           </div>
 
-          <!-- Seedbox ADMIN ruTorrent (ma-seedbox.me) -->
+          <!-- Seedbox ADMIN qBittorrent (Hetzner — workflow Torrent ADMIN) -->
           <div class="section">
             <div class="section-header">
-              <span>Seedbox ADMIN — ruTorrent</span>
-              <button class="btn-test" on:click={() => runTest('seedbox', () => TestSeedbox(cfg.seedbox_url, cfg.seedbox_user, cfg.seedbox_password))}>
-                {#if testLoading.seedbox}…{:else}Tester{/if}
+              <span>Seedbox ADMIN — qBittorrent (Hetzner)</span>
+              <button class="btn-test" on:click={() => runTest('qbitadmin', () => TestQBit(cfg.qbit_admin_url, cfg.qbit_admin_user, cfg.qbit_admin_password))}>
+                {#if testLoading.qbitadmin}…{:else}Tester{/if}
               </button>
             </div>
-            {#if testResults.seedbox}
-              <div class="test-result" class:ok={testResults.seedbox.ok}>{testResults.seedbox.message}</div>
+            {#if testResults.qbitadmin}
+              <div class="test-result" class:ok={testResults.qbitadmin.ok}>{testResults.qbitadmin.message}</div>
             {/if}
+            <div style="color:var(--text3);font-size:11px;margin-bottom:8px">
+              Si renseigné, le workflow Torrent ADMIN pousse le .torrent ici (au lieu de ruTorrent ci-dessous).
+            </div>
             <div class="field">
-              <label for="seedbox-url">URL ruTorrent</label>
-              <input id="seedbox-url" type="text" bind:value={cfg.seedbox_url} placeholder="https://my-seedbox.example/seedbox-XXXX/rutorrent/" />
+              <label for="qbitadmin-url">URL qBittorrent Web UI</label>
+              <input id="qbitadmin-url" type="text" bind:value={cfg.qbit_admin_url} placeholder="http://hetzner-host:port/" />
             </div>
             <div class="fields-grid">
               <div class="field">
-                <label for="seedbox-user">Utilisateur</label>
-                <input id="seedbox-user" type="text" bind:value={cfg.seedbox_user} />
+                <label for="qbitadmin-user">Utilisateur</label>
+                <input id="qbitadmin-user" type="text" bind:value={cfg.qbit_admin_user} />
               </div>
               <div class="field">
-                <label for="seedbox-pwd">Mot de passe</label>
-                <input id="seedbox-pwd" type="password" bind:value={cfg.seedbox_password} />
-              </div>
-              <div class="field">
-                <label for="seedbox-label">Label (optionnel)</label>
-                <input id="seedbox-label" type="text" bind:value={cfg.seedbox_label} placeholder="hydracker" />
+                <label for="qbitadmin-pwd">Mot de passe</label>
+                <input id="qbitadmin-pwd" type="password" bind:value={cfg.qbit_admin_password} />
               </div>
             </div>
           </div>
+
 
           <!-- FTP MODÉRATEUR (upload gros fichiers MKV pour le workflow Torrent MODO) — éditable -->
           <div class="section">
@@ -4649,6 +4742,45 @@
     from { opacity: 0; transform: scale(0.8) rotate(-6deg); }
     to   { opacity: 1; transform: scale(1) rotate(0deg); }
   }
+
+  /* SFTP toggle custom (input caché + pill custom) */
+  .sftp-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+    user-select: none;
+    font-weight: normal;
+    font-size: 12px;
+    color: var(--text2);
+  }
+  .sftp-toggle input { display: none; }
+  .sftp-track {
+    position: relative;
+    width: 28px;
+    height: 16px;
+    background: rgba(255, 255, 255, 0.15);
+    border-radius: 9999px;
+    transition: background 0.2s;
+    flex: none;
+  }
+  .sftp-thumb {
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 12px;
+    height: 12px;
+    background: #fff;
+    border-radius: 50%;
+    transition: transform 0.2s;
+  }
+  .sftp-toggle input:checked ~ .sftp-track {
+    background: rgba(96, 165, 250, 0.7);
+  }
+  .sftp-toggle input:checked ~ .sftp-track .sftp-thumb {
+    transform: translateX(12px);
+  }
+  .sftp-label { letter-spacing: 0.3px; }
 
   /* Section verrouillée team-shared (creds bakés au build) */
   .section-locked > .section-header {

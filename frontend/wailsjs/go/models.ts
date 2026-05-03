@@ -916,6 +916,7 @@ export namespace config {
 	    ftp_user: string;
 	    ftp_password: string;
 	    ftp_path: string;
+	    ftp_use_sftp: boolean;
 	    private_ftp_host: string;
 	    private_ftp_port: number;
 	    private_ftp_user: string;
@@ -947,6 +948,10 @@ export namespace config {
 	    nextcloud_admin_user: string;
 	    nextcloud_admin_password: string;
 	    nextcloud_admin_path: string;
+	    nextcloud_mod_url: string;
+	    nextcloud_mod_user: string;
+	    nextcloud_mod_password: string;
+	    nextcloud_mod_path: string;
 	    qbit_admin_url: string;
 	    qbit_admin_user: string;
 	    qbit_admin_password: string;
@@ -992,6 +997,7 @@ export namespace config {
 	        this.ftp_user = source["ftp_user"];
 	        this.ftp_password = source["ftp_password"];
 	        this.ftp_path = source["ftp_path"];
+	        this.ftp_use_sftp = source["ftp_use_sftp"];
 	        this.private_ftp_host = source["private_ftp_host"];
 	        this.private_ftp_port = source["private_ftp_port"];
 	        this.private_ftp_user = source["private_ftp_user"];
@@ -1023,6 +1029,10 @@ export namespace config {
 	        this.nextcloud_admin_user = source["nextcloud_admin_user"];
 	        this.nextcloud_admin_password = source["nextcloud_admin_password"];
 	        this.nextcloud_admin_path = source["nextcloud_admin_path"];
+	        this.nextcloud_mod_url = source["nextcloud_mod_url"];
+	        this.nextcloud_mod_user = source["nextcloud_mod_user"];
+	        this.nextcloud_mod_password = source["nextcloud_mod_password"];
+	        this.nextcloud_mod_path = source["nextcloud_mod_path"];
 	        this.qbit_admin_url = source["qbit_admin_url"];
 	        this.qbit_admin_user = source["qbit_admin_user"];
 	        this.qbit_admin_password = source["qbit_admin_password"];
@@ -1259,6 +1269,7 @@ export namespace main {
 	    ftp_errors: string[];
 	    files_attempted: string[];
 	    used_ftp: string;
+	    siblings_erased: string[];
 	
 	    static createFrom(source: any = {}) {
 	        return new DeleteTorrentResult(source);
@@ -1275,6 +1286,7 @@ export namespace main {
 	        this.ftp_errors = source["ftp_errors"];
 	        this.files_attempted = source["files_attempted"];
 	        this.used_ftp = source["used_ftp"];
+	        this.siblings_erased = source["siblings_erased"];
 	    }
 	}
 	export class FicheContent {
@@ -1346,6 +1358,30 @@ export namespace main {
 		    }
 		    return a;
 		}
+	}
+	export class NexumDebug {
+	    hyd_hash_lower: string;
+	    hyd_name_norm: string;
+	    hash_key_exists: boolean;
+	    name_key_exists: boolean;
+	    index_hash_count: number;
+	    index_name_count: number;
+	    sample_name_keys: string[];
+	
+	    static createFrom(source: any = {}) {
+	        return new NexumDebug(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.hyd_hash_lower = source["hyd_hash_lower"];
+	        this.hyd_name_norm = source["hyd_name_norm"];
+	        this.hash_key_exists = source["hash_key_exists"];
+	        this.name_key_exists = source["name_key_exists"];
+	        this.index_hash_count = source["index_hash_count"];
+	        this.index_name_count = source["index_name_count"];
+	        this.sample_name_keys = source["sample_name_keys"];
+	    }
 	}
 	export class NzbFileEntry {
 	    filename: string;

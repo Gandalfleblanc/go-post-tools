@@ -45,6 +45,10 @@ type Config struct {
 	FTPUser     string `json:"ftp_user"`
 	FTPPassword string `json:"ftp_password"`
 	FTPPath     string `json:"ftp_path"`
+	// Si true, utilise SFTP (port 22) au lieu de FTP (port 21) pour le workflow
+	// Torrent ADMIN. Contourne les ISP qui throttle FTP — même seedbox, mêmes
+	// credentials, juste un port + protocole différent (SSH).
+	FTPUseSFTP bool `json:"ftp_use_sftp"`
 
 	// FTP Privé (perso de chaque user, saisi dans Réglages, jamais baked)
 	PrivateFTPHost     string `json:"private_ftp_host"`

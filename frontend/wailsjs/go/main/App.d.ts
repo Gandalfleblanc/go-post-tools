@@ -31,6 +31,8 @@ export function ClearLihdlSettingsPassword(arg1:string):Promise<void>;
 
 export function ClearSeedboxSettingsPassword(arg1:string):Promise<void>;
 
+export function DebugNexumMatch(arg1:main.NexumIndex,arg2:string,arg3:string):Promise<main.NexumDebug>;
+
 export function DeleteLien(arg1:number):Promise<void>;
 
 export function DeleteMyLien(arg1:number):Promise<void>;
@@ -86,6 +88,8 @@ export function GetMyUsername():Promise<string>;
 export function GetNexumIndex():Promise<main.NexumIndex>;
 
 export function GetNzbFilenames(arg1:number):Promise<Array<main.NzbFileEntry>>;
+
+export function GetSeedboxNexumIndex():Promise<main.NexumIndex>;
 
 export function GetTeamConfig():Promise<main.TeamConfig>;
 
@@ -221,11 +225,13 @@ export function TestModSeedbox(arg1:string,arg2:string,arg3:string):Promise<test
 
 export function TestNextcloud(arg1:string,arg2:string,arg3:string):Promise<tester.Result>;
 
-export function TestNexum():Promise<string>;
+export function TestNexum(arg1:string,arg2:string):Promise<string>;
 
 export function TestOneFichier(arg1:string):Promise<tester.Result>;
 
 export function TestQBit(arg1:string,arg2:string,arg3:string):Promise<tester.Result>;
+
+export function TestSFTP(arg1:string,arg2:number,arg3:string,arg4:string):Promise<tester.Result>;
 
 export function TestSeedbox(arg1:string,arg2:string,arg3:string):Promise<tester.Result>;
 
