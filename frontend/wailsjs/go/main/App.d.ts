@@ -69,7 +69,7 @@ export function GetCurrentUser():Promise<main.AuthResult>;
 
 export function GetDDLFilename(arg1:string):Promise<string>;
 
-export function GetDDLFilenameByLienID(arg1:number):Promise<string>;
+export function GetDDLFilenameByLienID(arg1:number):Promise<main.DDLResolved>;
 
 export function GetEffectiveHydrackerURL():Promise<string>;
 

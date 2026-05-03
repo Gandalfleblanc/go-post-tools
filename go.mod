@@ -4,11 +4,13 @@ go 1.25.0
 
 require (
 	github.com/anacrolix/torrent v1.61.0
+	github.com/bwmarrin/discordgo v0.29.0
 	github.com/fsnotify/fsnotify v1.9.0
 	github.com/gen2brain/beeep v0.11.2
 	github.com/jlaffaye/ftp v0.2.0
 	github.com/wailsapp/wails/v2 v2.12.0
 	golang.org/x/crypto v0.50.0
+	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.49.1
 )
 

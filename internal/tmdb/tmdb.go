@@ -16,6 +16,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -48,25 +49,80 @@ func NewClientWithBase(baseURL string) *Client {
 // Movie : structure compatible TMDB officiel + champs bonus du proxy
 // (ImdbID, NoteImdb, VoteImdb).
 type Movie struct {
-	ID           int     `json:"id"`
-	Title        string  `json:"title"`
-	Name         string  `json:"name"`
-	Overview     string  `json:"overview"`
-	PosterPath   string  `json:"poster_path"`
-	ReleaseDate  string  `json:"release_date"`
-	FirstAirDate string  `json:"first_air_date"`
-	VoteAverage  float64 `json:"vote_average"`
-	MediaType    string  `json:"media_type"`
-	ImdbID       string  `json:"imdb_id,omitempty"`
-	NoteImdb     float64 `json:"note_imdb,omitempty"`
-	VoteImdb     int     `json:"vote_imdb,omitempty"`
+	ID            int     `json:"id"`
+	Title         string  `json:"title"`
+	OriginalTitle string  `json:"original_title"`
+	Name          string  `json:"name"`
+	OriginalName  string  `json:"original_name"`
+	Overview      string  `json:"overview"`
+	PosterPath    string  `json:"poster_path"`
+	ReleaseDate   string  `json:"release_date"`
+	FirstAirDate  string  `json:"first_air_date"`
+	VoteAverage   float64 `json:"vote_average"`
+	MediaType     string  `json:"media_type"`
+	ImdbID        string  `json:"imdb_id,omitempty"`
+	NoteImdb      float64 `json:"note_imdb,omitempty"`
+	VoteImdb      int     `json:"vote_imdb,omitempty"`
+}
+
+// UnmarshalJSON : tolérant au type des champs numériques. Le proxy UKLM
+// retourne parfois note_imdb / vote_imdb / vote_average sous forme de string
+// (ex: "" ou "7.2") au lieu de number. On accepte les deux formats.
+func (m *Movie) UnmarshalJSON(data []byte) error {
+	type movieAlias Movie
+	aux := &struct {
+		NoteImdb    json.RawMessage `json:"note_imdb"`
+		VoteImdb    json.RawMessage `json:"vote_imdb"`
+		VoteAverage json.RawMessage `json:"vote_average"`
+		*movieAlias
+	}{movieAlias: (*movieAlias)(m)}
+	if err := json.Unmarshal(data, aux); err != nil {
+		return err
+	}
+	m.NoteImdb = parseFlexFloat(aux.NoteImdb)
+	m.VoteImdb = int(parseFlexFloat(aux.VoteImdb))
+	m.VoteAverage = parseFlexFloat(aux.VoteAverage)
+	return nil
+}
+
+// parseFlexFloat : décode un json.RawMessage en float64, accepte number ou
+// string (ou null / "" → 0). Tolérant aux erreurs (retourne 0 plutôt que err).
+func parseFlexFloat(raw json.RawMessage) float64 {
+	if len(raw) == 0 || string(raw) == "null" {
+		return 0
+	}
+	if raw[0] == '"' {
+		var s string
+		if err := json.Unmarshal(raw, &s); err != nil {
+			return 0
+		}
+		if s == "" {
+			return 0
+		}
+		v, err := strconv.ParseFloat(s, 64)
+		if err != nil {
+			return 0
+		}
+		return v
+	}
+	var v float64
+	if err := json.Unmarshal(raw, &v); err != nil {
+		return 0
+	}
+	return v
 }
 
 func (m *Movie) DisplayTitle() string {
 	if m.Title != "" {
 		return m.Title
 	}
-	return m.Name
+	if m.Name != "" {
+		return m.Name
+	}
+	if m.OriginalTitle != "" {
+		return m.OriginalTitle
+	}
+	return m.OriginalName
 }
 
 func (m *Movie) Year() string {
@@ -102,6 +158,25 @@ type searchHit struct {
 	NoteTmdb      float64 `json:"note_tmdb"`
 	Overview      string  `json:"overview"`
 	MediaType     string  `json:"media_type,omitempty"` // "movie" ou "tv" si proxy l'expose
+}
+
+// UnmarshalJSON sur searchHit : même tolérance que Movie (proxy parfois
+// retourne note_imdb/note_tmdb/vote_imdb en string).
+func (h *searchHit) UnmarshalJSON(data []byte) error {
+	type hitAlias searchHit
+	aux := &struct {
+		NoteImdb json.RawMessage `json:"note_imdb"`
+		VoteImdb json.RawMessage `json:"vote_imdb"`
+		NoteTmdb json.RawMessage `json:"note_tmdb"`
+		*hitAlias
+	}{hitAlias: (*hitAlias)(h)}
+	if err := json.Unmarshal(data, aux); err != nil {
+		return err
+	}
+	h.NoteImdb = parseFlexFloat(aux.NoteImdb)
+	h.VoteImdb = int(parseFlexFloat(aux.VoteImdb))
+	h.NoteTmdb = parseFlexFloat(aux.NoteTmdb)
+	return nil
 }
 
 func (h searchHit) toMovie() Movie {

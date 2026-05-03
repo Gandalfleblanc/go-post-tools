@@ -834,30 +834,33 @@
   async function processDDLQueue() {
     if (ddlQueueRunning) return
     ddlQueueRunning = true
+    addLog('FICHE', `processDDLQueue start (${ddlQueue.length} en attente)`)
     while (ddlQueue.length > 0) {
       const lienId = ddlQueue.shift()
+      addLog('FICHE', `→ debrid lien #${lienId}`)
       let attempt = 0
       while (attempt < 2) {
         try {
-          // Backend fait debrid + HEAD via ID stable, pas l'URL volatile
-          const fname = await GetDDLFilenameByLienID(lienId)
-          ddlFilenames = { ...ddlFilenames, [lienId]: { state: 'ok', filename: fname } }
+          const r = await GetDDLFilenameByLienID(lienId)
+          addLog('FICHE', `← lien #${lienId} : url=${r?.url || '∅'} filename=${r?.filename || '∅'} (keys: ${Object.keys(r || {}).join(',')})`)
+          ddlFilenames = { ...ddlFilenames, [lienId]: { state: 'ok', filename: r?.filename || '', url: r?.url || '' } }
           break
         } catch(e) {
           const msg = String(e)
+          addLog('FICHE', `✗ lien #${lienId} : ${msg}`)
           if (attempt === 0 && /429|too many/i.test(msg)) {
             attempt++
-            await new Promise(r => setTimeout(r, 2500))  // backoff
+            await new Promise(r => setTimeout(r, 2500))
             continue
           }
           ddlFilenames = { ...ddlFilenames, [lienId]: { state: 'err', error: msg } }
           break
         }
       }
-      // Rate limit : 1.5s entre chaque appel pour éviter ban Hydracker / 1Fichier
       await new Promise(r => setTimeout(r, 1500))
     }
     ddlQueueRunning = false
+    addLog('FICHE', `processDDLQueue done`)
   }
   function resolveDDLName(lienId) {
     if (!lienId) return
@@ -2244,7 +2247,12 @@
                                   {#if l.host?.name || l.id_host}<span class="cc-chip cc-chip-host">{l.host?.name || ('host#'+l.id_host)}</span>{/if}
                                 </div>
                                 {#if ddlFilenames[l.id]?.state === 'ok'}
-                                  <div class="cc-name" title={ddlFilenames[l.id].filename}>{ddlFilenames[l.id].filename}</div>
+                                  {#if ddlFilenames[l.id].filename}
+                                    <div class="cc-name" title={ddlFilenames[l.id].filename}>{ddlFilenames[l.id].filename}</div>
+                                  {/if}
+                                  {#if ddlFilenames[l.id].url}
+                                    <div class="cc-name cc-name-mono cc-sub-url" title={ddlFilenames[l.id].url}>{ddlFilenames[l.id].url}</div>
+                                  {/if}
                                 {:else if ddlFilenames[l.id]?.state === 'loading'}
                                   <div class="cc-name-loading">⏳ Débridage + résolution du nom…</div>
                                 {:else if ddlFilenames[l.id]?.state === 'err'}
@@ -2260,7 +2268,17 @@
                               </div>
                               <div class="cc-actions">
                                 <button class="btn-test btn-icon" title="Voir le NFO" on:click={() => openNfo('liens', l.id, l.lien || '')}>ⓘ</button>
-                                <button class="btn-test" on:click={() => OpenBrowser(l.lien)} disabled={!l.lien}>🌐 Ouvrir</button>
+                                <button class="btn-test" on:click={async () => {
+                                  // Re-fetch frais (URL temporaire qui expire)
+                                  try {
+                                    const r = await GetDDLFilenameByLienID(l.id)
+                                    if (r?.url) {
+                                      OpenBrowser(r.url)
+                                      // Met à jour le cache pour affichage
+                                      ddlFilenames = { ...ddlFilenames, [l.id]: { state: 'ok', filename: r.filename || ddlFilenames[l.id]?.filename || '', url: r.url } }
+                                    }
+                                  } catch(e) { addLog('FICHE', `✗ open lien #${l.id}: ${e}`) }
+                                }} title="Re-debrid + ouvre l'URL fraîche dans le browser">🌐 Ouvrir</button>
                               </div>
                             </div>
                           {/each}
@@ -2281,16 +2299,18 @@
                             {#if l.host?.name || l.id_host}<span class="cc-chip cc-chip-host">{l.host?.name || ('host#'+l.id_host)}</span>{/if}
                           </div>
                           {#if ddlFilenames[l.id]?.state === 'ok'}
-                            <div class="cc-name" title={ddlFilenames[l.id].filename}>{ddlFilenames[l.id].filename}</div>
-                            <div class="cc-name cc-name-mono cc-sub-url" title={l.lien || ''}>{l.lien}</div>
+                            {#if ddlFilenames[l.id].filename}
+                              <div class="cc-name" title={ddlFilenames[l.id].filename}>{ddlFilenames[l.id].filename}</div>
+                            {/if}
+                            {#if ddlFilenames[l.id].url}
+                              <div class="cc-name cc-name-mono cc-sub-url" title={ddlFilenames[l.id].url}>{ddlFilenames[l.id].url}</div>
+                            {/if}
                           {:else if ddlFilenames[l.id]?.state === 'loading'}
-                            <div class="cc-name cc-name-mono cc-sub-url">{l.lien}</div>
-                            <div class="cc-name-loading">⏳ Résolution du nom du fichier…</div>
+                            <div class="cc-name-loading">⏳ Débridage + résolution du nom…</div>
                           {:else if ddlFilenames[l.id]?.state === 'err'}
-                            <div class="cc-name cc-name-mono cc-sub-url">{l.lien}</div>
-                            <div class="cc-name-loading" style="color:#ff9585" title={ddlFilenames[l.id].error}>⚠ {ddlFilenames[l.id].error.length > 80 ? ddlFilenames[l.id].error.slice(0,80)+'…' : ddlFilenames[l.id].error}</div>
+                            <div class="cc-name-loading" style="color:#ff9585" title={ddlFilenames[l.id].error}>⚠ {ddlFilenames[l.id].error.length > 100 ? ddlFilenames[l.id].error.slice(0,100)+'…' : ddlFilenames[l.id].error}</div>
                           {:else}
-                            <div class="cc-name cc-name-mono" title={l.lien || ''}>{l.lien || '(URL masquée — clic Ouvrir pour résoudre)'}</div>
+                            <div class="cc-name-loading">⏳ En attente…</div>
                           {/if}
                           <div class="cc-tags">
                             {#each (l.langues_compact || []) as la}<span class="cc-tag cc-tag-lang">{langFlag(la.name)} {la.name}</span>{/each}
@@ -2299,8 +2319,16 @@
                           </div>
                         </div>
                         <div class="cc-actions">
-                          <button class="btn-test btn-icon" title="Voir le NFO" on:click={() => openNfo('liens', l.id, l.lien || '')}>ⓘ</button>
-                          <button class="btn-test" on:click={() => OpenBrowser(l.lien)} disabled={!l.lien}>🌐 Ouvrir</button>
+                          <button class="btn-test btn-icon" title="Voir le NFO" on:click={() => openNfo('liens', l.id, ddlFilenames[l.id]?.url || '')}>ⓘ</button>
+                          <button class="btn-test" on:click={async () => {
+                            try {
+                              const r = await GetDDLFilenameByLienID(l.id)
+                              if (r?.url) {
+                                OpenBrowser(r.url)
+                                ddlFilenames = { ...ddlFilenames, [l.id]: { state: 'ok', filename: r.filename || ddlFilenames[l.id]?.filename || '', url: r.url } }
+                              }
+                            } catch(e) { addLog('FICHE', `✗ open lien #${l.id}: ${e}`) }
+                          }} title="Re-debrid + ouvre l'URL fraîche">🌐 Ouvrir</button>
                         </div>
                       </div>
                     {/each}

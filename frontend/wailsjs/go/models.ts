@@ -188,6 +188,50 @@ export namespace api {
 		    return a;
 		}
 	}
+	export class LienDetail {
+	    lien: Lien;
+	    directDL: string;
+	    raw_url: string;
+	    debrided: boolean;
+	    debrid_error: string;
+	    debrid_error_detail: string;
+	    link_source: string;
+	    status: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new LienDetail(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.lien = this.convertValues(source["lien"], Lien);
+	        this.directDL = source["directDL"];
+	        this.raw_url = source["raw_url"];
+	        this.debrided = source["debrided"];
+	        this.debrid_error = source["debrid_error"];
+	        this.debrid_error_detail = source["debrid_error_detail"];
+	        this.link_source = source["link_source"];
+	        this.status = source["status"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 	export class LiensResult {
 	    liens: Lien[];
 	    count: number;
@@ -899,6 +943,13 @@ export namespace config {
 	    ftp_mod_user: string;
 	    ftp_mod_password: string;
 	    ftp_mod_path: string;
+	    nextcloud_admin_url: string;
+	    nextcloud_admin_user: string;
+	    nextcloud_admin_password: string;
+	    nextcloud_admin_path: string;
+	    qbit_admin_url: string;
+	    qbit_admin_user: string;
+	    qbit_admin_password: string;
 	    seedbox_settings_password_hash: string;
 	    torrent_admin_acknowledged: boolean;
 	    tracker_url: string;
@@ -968,6 +1019,13 @@ export namespace config {
 	        this.ftp_mod_user = source["ftp_mod_user"];
 	        this.ftp_mod_password = source["ftp_mod_password"];
 	        this.ftp_mod_path = source["ftp_mod_path"];
+	        this.nextcloud_admin_url = source["nextcloud_admin_url"];
+	        this.nextcloud_admin_user = source["nextcloud_admin_user"];
+	        this.nextcloud_admin_password = source["nextcloud_admin_password"];
+	        this.nextcloud_admin_path = source["nextcloud_admin_path"];
+	        this.qbit_admin_url = source["qbit_admin_url"];
+	        this.qbit_admin_user = source["qbit_admin_user"];
+	        this.qbit_admin_password = source["qbit_admin_password"];
 	        this.seedbox_settings_password_hash = source["seedbox_settings_password_hash"];
 	        this.torrent_admin_acknowledged = source["torrent_admin_acknowledged"];
 	        this.tracker_url = source["tracker_url"];
@@ -1039,6 +1097,7 @@ export namespace main {
 	    badge?: string;
 	    color?: string;
 	    tabs?: string[];
+	    permissions?: string[];
 	
 	    static createFrom(source: any = {}) {
 	        return new AuthResult(source);
@@ -1053,6 +1112,7 @@ export namespace main {
 	        this.badge = source["badge"];
 	        this.color = source["color"];
 	        this.tabs = source["tabs"];
+	        this.permissions = source["permissions"];
 	    }
 	}
 	export class AutoReseedDDLResult {
@@ -1159,6 +1219,20 @@ export namespace main {
 	        this.done = source["done"];
 	        this.lihdl_url = source["lihdl_url"];
 	        this.lihdl_name = source["lihdl_name"];
+	    }
+	}
+	export class DDLResolved {
+	    url: string;
+	    filename: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new DDLResolved(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.url = source["url"];
+	        this.filename = source["filename"];
 	    }
 	}
 	export class DDLWorkflowResult {
@@ -1346,6 +1420,7 @@ export namespace main {
 	    color: string;
 	    title?: string;
 	    tabs: string[];
+	    permissions?: string[];
 	
 	    static createFrom(source: any = {}) {
 	        return new RoleDef(source);
@@ -1357,6 +1432,7 @@ export namespace main {
 	        this.color = source["color"];
 	        this.title = source["title"];
 	        this.tabs = source["tabs"];
+	        this.permissions = source["permissions"];
 	    }
 	}
 	export class TeamUser {
@@ -1602,7 +1678,9 @@ export namespace tmdb {
 	export class Movie {
 	    id: number;
 	    title: string;
+	    original_title: string;
 	    name: string;
+	    original_name: string;
 	    overview: string;
 	    poster_path: string;
 	    release_date: string;
@@ -1621,7 +1699,9 @@ export namespace tmdb {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
 	        this.title = source["title"];
+	        this.original_title = source["original_title"];
 	        this.name = source["name"];
+	        this.original_name = source["original_name"];
 	        this.overview = source["overview"];
 	        this.poster_path = source["poster_path"];
 	        this.release_date = source["release_date"];

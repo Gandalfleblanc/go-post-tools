@@ -2109,14 +2109,20 @@ func (a *App) GetUploaderStats(daysSince int) (*UploaderScanResult, error) {
 // GetDDLFilename résout le nom de fichier réel derrière une URL DDL (1fichier
 // pour l'instant). Utilisé dans la section Fiches pour afficher le vrai
 // filename à côté de chaque lien partagé.
-// GetDDLFilenameByLienID résout le nom du fichier à partir de l'ID stable du lien.
-// L'URL débridée 1Fichier change à chaque appel (URLs temporaires), donc on
-// préfère passer l'ID stable et faire le chain debrid → HEAD côté backend.
-func (a *App) GetDDLFilenameByLienID(lienID int) (string, error) {
+// DDLResolved : résultat de la résolution d'un lien DDL — URL débridée + filename.
+type DDLResolved struct {
+	URL      string `json:"url"`      // URL débridée temporaire (1Fichier directDL ou raw)
+	Filename string `json:"filename"` // nom du fichier extrait via HEAD
+}
+
+// GetDDLFilenameByLienID résout l'URL débridée + le nom du fichier à partir de
+// l'ID stable du lien. L'URL change à chaque appel (URLs temporaires), donc le
+// caller doit refetch pour avoir une URL fraîche au moment du clic.
+func (a *App) GetDDLFilenameByLienID(lienID int) (*DDLResolved, error) {
 	a.resetCancellation()
 	detail, err := a.client.GetLienDetailByID(lienID)
 	if err != nil {
-		return "", fmt.Errorf("debrid: %w", err)
+		return nil, fmt.Errorf("debrid: %w", err)
 	}
 	url := detail.DirectDL
 	if url == "" {
@@ -2124,17 +2130,16 @@ func (a *App) GetDDLFilenameByLienID(lienID int) (string, error) {
 	}
 	if url == "" {
 		if detail.DebridError != "" {
-			return "", fmt.Errorf("debrid refusé: %s", detail.DebridError)
+			return nil, fmt.Errorf("debrid refusé: %s", detail.DebridError)
 		}
-		return "", fmt.Errorf("URL absente de la réponse Hydracker")
+		return nil, fmt.Errorf("URL absente de la réponse Hydracker")
 	}
-	return GetDDLFilename_(a, url)
-}
-
-// GetDDLFilename_ : version interne (sans capitalize) pour réutiliser depuis
-// GetDDLFilenameByLienID sans dupliquer la logique.
-func GetDDLFilename_(a *App, shareURL string) (string, error) {
-	return a.GetDDLFilename(shareURL)
+	fname, err := a.GetDDLFilename(url)
+	if err != nil {
+		// Si HEAD échoue, on retourne quand même l'URL (le filename peut rester vide)
+		return &DDLResolved{URL: url, Filename: ""}, nil
+	}
+	return &DDLResolved{URL: url, Filename: fname}, nil
 }
 
 func (a *App) GetDDLFilename(shareURL string) (string, error) {
