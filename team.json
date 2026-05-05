@@ -123,6 +123,11 @@
       "pseudo": "tartempion",
       "role": "team",
       "password_hash": "$2a$12$gJT6p3qq6eKFpOgzuklVoeqlxDAEss/.eble6B/1Vk5Qncvjea7bi"
+    },
+    {
+      "pseudo": "pyrodzeus34",
+      "role": "modo",
+      "password_hash": "$2a$12$SE3kHUKFa30umk5VpjXnu.4J8INwypff1wWOlaAF9KctJ8j1szb7a"
     }
   ]
 }
