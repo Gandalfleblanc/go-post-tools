@@ -35,6 +35,7 @@
   let selectedHydracker = null
   let hydrackerNotFound = false      // fiche introuvable après recherche auto
   let hydrackerManualId = ''         // saisie manuelle de l'ID Hydracker
+  let hydrackerManualType = 'tv'     // 'tv' ou 'movie' — sert à choisir le bon endpoint TMDB lors du resync
   let manualTmdbIdEdit = ''          // saisie manuelle TMDB ID dans la card "introuvable"
   let tmdbReloadLoading = false      // spinner du bouton 🔄 reload TMDB
   // Sync l'input avec le selectedTMDB courant pour éviter d'afficher l'ID
@@ -48,6 +49,7 @@
   let postSubs = []        // [{id, name}]
   let langsAutoFilled = false
   let subsAutoFilled = false
+  let qualityAutoFilled = false  // true tant que l'user n'a pas changé manuellement la qualité
   let postUploadTypes = { nzb: false, torrent_admin: false, torrent_modo: true, torrent_prive: false, ddl: false }
   // Torrent ADMIN n'est visible que pour les admins (= ceux qui ont déverrouillé
   // la section Seedbox dans Réglages avec le mdp partagé).
@@ -294,6 +296,14 @@
   }
 
   let queueTMDBHint = 0  // id TMDB à réutiliser pour les items suivants d'une même queue
+  // Paire {wrongTmdbId → correctHydrackerId} : si l'auto-detect TMDB d'un futur
+  // épisode donne le même MAUVAIS tmdb_id, on bascule direct sur la fiche corrigée.
+  // Évite que le hint contamine des épisodes d'autres shows.
+  let queueHydrackerHint = { wrongTmdbId: 0, correctHydrackerId: 0 }
+
+  // Toggle Film/Série auto-pré-sélectionné selon la présence saison/épisode
+  // (sinon par défaut on suppose Série puisque c'est le cas qui pose problème).
+  $: hydrackerManualType = (postSeason > 0 || postEpisode > 0) ? 'tv' : (selectedTMDB?.media_type === 'movie' ? 'movie' : hydrackerManualType)
 
   async function processQueue() {
     if (queueProcessing) return
@@ -311,6 +321,9 @@
     // Snapshot de la fiche TMDB déjà sélectionnée (typiquement le show TV pour
     // les 10 épisodes droppés) → réutilisée sur tous les items suivants.
     queueTMDBHint = selectedTMDB?.id || 0
+    // Reset du hint Hydracker au début de chaque queue (évite de propager
+    // une correction d'une queue précédente).
+    queueHydrackerHint = { wrongTmdbId: 0, correctHydrackerId: 0 }
     // Pas de lock qualité/langues/subs : on laisse l'auto-detect tourner par
     // fichier, chaque épisode peut avoir des pistes ou une qualité différente.
     while (queue.length > 0) {
@@ -339,6 +352,7 @@
     queueCurrent = ''
     queueProcessing = false
     queueTMDBHint = 0
+    queueHydrackerHint = { wrongTmdbId: 0, correctHydrackerId: 0 }
     // Récap final cumulé
     if (queueResults.length > 1) {
       const okCount = queueResults.filter(r => r.ok).length
@@ -555,9 +569,16 @@
     } else if (/\bweb([-.]?(?:rip|dl))?\b/.test(name) || name.includes('.web.')) {
       // WEB 1080p prioritaire si résolution présente (films ET séries)
       const is1080p = /\b1080p\b/i.test(file.name)
-      if (isH265) qualID = findQual('web', '1080p', 'x265') || findQual('webrip', '1080p', 'x265') || findQual('web', 'x265') || findQual('webrip', 'x265')
-      if (!qualID && is1080p) qualID = findQual('web', '1080p') || findQual('webrip', '1080p')
-      if (!qualID) qualID = (bitrate > 0 && bitrate <= 3000) ? 94 : 4 // Fallback : WEB 1080p Light sinon WEB
+      const isLight = bitrate > 0 && bitrate <= 3000 // ≤3000 kbps = WEB Light
+      if (isLight) {
+        // Bitrate faible → variante Light en priorité (x265 ou pas)
+        if (isH265) qualID = findQual('web', '1080p', 'light', 'x265') || findQual('webrip', '1080p', 'light', 'x265')
+        if (!qualID) qualID = findQual('web', '1080p', 'light') || findQual('webrip', '1080p', 'light') || 94
+      } else {
+        if (isH265) qualID = findQual('web', '1080p', 'x265') || findQual('webrip', '1080p', 'x265') || findQual('web', 'x265') || findQual('webrip', 'x265')
+        if (!qualID && is1080p) qualID = findQual('web', '1080p') || findQual('webrip', '1080p')
+        if (!qualID) qualID = 4 // Fallback WEB générique
+      }
     } else if (/\bremux\b/i.test(name)) {
       // REMUX : rip BluRay intouché (x264 généralement, full bitrate). Doit être
       // testé AVANT la règle BluRay (sinon le mot "BluRay" du filename match d'abord
@@ -574,13 +595,42 @@
 
     if (qualID) {
       postQuality = qualID
+      qualityAutoFilled = true
     } else if (fileInfo?.quality) {
       // Fallback : détection classique par le parser
       const qual = fileInfo.quality.toLowerCase()
       const src  = (fileInfo.source || '').toLowerCase()
       let q = src ? qualityOptions.find(o => { const n = o.name.toLowerCase(); return n.includes(qual) && n.includes(src) }) : null
       if (!q) q = qualityOptions.find(o => o.name.toLowerCase().includes(qual))
-      if (q) postQuality = q.id
+      if (q) { postQuality = q.id; qualityAutoFilled = true }
+    }
+  }
+
+  // Override : MediaInfo arrive APRÈS la première détection (qui se fait sur le
+  // nom du fichier, sans bitrate). Si WEB + bitrate ≤ 3000 kbps détecté ensuite
+  // par MediaInfo et que l'user n'a pas touché au select, bascule sur WEB Light.
+  $: if (qualityOptions.length && file?.name && mediaInfo?.bitrate && qualityAutoFilled && postQuality > 0) {
+    const bitrate = parseInt(String(mediaInfo.bitrate).replace(/[^0-9]/g, '')) || 0
+    const name = file.name.toLowerCase()
+    const isWeb = /\bweb([-.]?(?:rip|dl))?\b/.test(name) || name.includes('.web.')
+    if (isWeb && bitrate > 0 && bitrate <= 3000) {
+      const currentName = (qualityOptions.find(q => q.id === postQuality)?.name || '').toLowerCase()
+      if (!currentName.includes('light')) {
+        const isH265 = /\b(x265|h\.?265|hevc)\b/i.test(file.name)
+        const findQual = (...kw) => {
+          const lc = kw.map(k => k.toLowerCase().replace(/[\s-]/g, ''))
+          return qualityOptions.find(o => {
+            const n = o.name.toLowerCase().replace(/[\s-]/g, '')
+            return lc.every(k => n.includes(k))
+          })?.id || 0
+        }
+        let lightID = 0
+        if (isH265) lightID = findQual('web', '1080p', 'light', 'x265') || findQual('webrip', '1080p', 'light', 'x265')
+        if (!lightID) lightID = findQual('web', '1080p', 'light') || findQual('webrip', '1080p', 'light') || 94
+        if (lightID && lightID !== postQuality) {
+          postQuality = lightID
+        }
+      }
     }
   }
 
@@ -753,6 +803,7 @@
     nfoEditMode = isArchive  // archive = pas de mediaInfo → édition manuelle. Folder = on tente sur le 1er MKV.
     langsAutoFilled = false
     subsAutoFilled = false
+    qualityAutoFilled = false
 
     // Objet file synthétique pour afficher le nom
     file = { name: filename }
@@ -1012,8 +1063,36 @@
     hydrackerManualId = ''
     if (movie.id) {
       try {
-        const found = await HydrackerGetByTmdbID(movie.id)
+        // Hint Hydracker : utilisé UNIQUEMENT pour les épisodes de séries (pas
+        // les films), et seulement si l'auto-detect TMDB tombe sur le même
+        // mauvais tmdb_id que celui qui a déclenché la correction manuelle.
+        // → Évite de contaminer une queue de films distincts.
+        const isSeriesEpisode = movie.media_type === 'tv' || /\bS\d{1,2}E\d{1,3}\b/i.test(file?.name || '')
+        let found = null
+        if (isSeriesEpisode && queueHydrackerHint.correctHydrackerId && queueHydrackerHint.wrongTmdbId === movie.id) {
+          try { found = await HydrackerGetByID(queueHydrackerHint.correctHydrackerId) } catch(e) {}
+        }
+        if (!found) {
+          found = await HydrackerGetByTmdbID(movie.id)
+        }
         if (found) {
+          // Si la fiche trouvée pointe vers un tmdb_id différent (ex: queue
+          // batch série mal détectée → Lawn & Order au lieu de Law & Order),
+          // resync le poster du haut sur le bon TMDB.
+          const wantedTmdbId = found.tmdb_id || found.tmdbID
+          if (wantedTmdbId && wantedTmdbId !== movie.id) {
+            try {
+              const mediaType = found.type === 'movie' ? 'movie' : 'tv'
+              const correctMovie = await TMDBGetByID(wantedTmdbId, mediaType)
+              if (correctMovie) {
+                selectedTMDB = correctMovie
+                posterDataUrl = ''
+                if (correctMovie.poster_path) {
+                  try { posterDataUrl = await FetchImageBase64('https://image.tmdb.org/t/p/w342' + correctMovie.poster_path) } catch(e) {}
+                }
+              }
+            } catch(e) {}
+          }
           await selectHydracker(found)
         } else {
           // Fallback : recherche par titre
@@ -1054,6 +1133,36 @@
       if (found && found.id) {
         addLog('HYD', `✓ Fiche #${found.id} — ${found.name}`)
         hydrackerNotFound = false
+        // Mémorise la paire {mauvais tmdb auto-detect → bonne fiche validée}
+        // UNIQUEMENT si on est sur une série (épisode multi-batch). Les films
+        // ne partagent jamais de fiche entre eux.
+        const isSeriesEpisode = (selectedTMDB?.media_type === 'tv') || /\bS\d{1,2}E\d{1,3}\b/i.test(file?.name || '') || found.type === 'tv' || found.type === 'series'
+        if (isSeriesEpisode) {
+          queueHydrackerHint = {
+            wrongTmdbId: selectedTMDB?.id || 0,
+            correctHydrackerId: found.id,
+          }
+        }
+        // Si la fiche Hydracker est liée à un autre tmdb_id que celui auto-detecté,
+        // on re-fetch TMDB pour mettre à jour le poster + titre/année du haut.
+        // Le mediaType vient du toggle Film/Série (l'auto-detect via found.type
+        // peut être ambigu : Hydracker utilise "series"/"tv"/"movie"...).
+        const mediaType = hydrackerManualType === 'movie' ? 'movie' : 'tv'
+        const wantedTmdbId = found.tmdb_id || found.tmdbID
+        if (wantedTmdbId && (!selectedTMDB || selectedTMDB.id !== wantedTmdbId || selectedTMDB.media_type !== mediaType)) {
+          try {
+            const movie = await TMDBGetByID(wantedTmdbId, mediaType)
+            if (movie) {
+              selectedTMDB = movie
+              tmdbAmbiguous = false
+              posterDataUrl = ''
+              if (movie.poster_path) {
+                try { posterDataUrl = await FetchImageBase64('https://image.tmdb.org/t/p/w342' + movie.poster_path) } catch(e) {}
+              }
+              addLog('HYD', `↻ TMDB resync → #${wantedTmdbId} ${movie.title || movie.name}`)
+            }
+          } catch(e) {}
+        }
         await selectHydracker(found)
       } else {
         hydrackerManualError = `Fiche #${id} introuvable sur Hydracker`
@@ -1463,6 +1572,14 @@
             Ouvrir Hydracker Admin
           </button>
           <div class="hyd-create-hint" style="margin-top:10px">Après création, entrez l'ID de la fiche :</div>
+          <div class="hyd-type-toggle">
+            <label class:active={hydrackerManualType === 'movie'}>
+              <input type="radio" bind:group={hydrackerManualType} value="movie" /> 🎬 Film
+            </label>
+            <label class:active={hydrackerManualType === 'tv'}>
+              <input type="radio" bind:group={hydrackerManualType} value="tv" /> 📺 Série
+            </label>
+          </div>
           <div class="hyd-id-row">
             <input type="number" bind:value={hydrackerManualId} placeholder="ID fiche Hydracker"
               on:keydown={e => e.key === 'Enter' && confirmHydrackerID()} />
@@ -1668,7 +1785,7 @@
             <!-- Colonne gauche -->
             <div class="post-field">
               <label for="post-quality">Qualité</label>
-              <select id="post-quality" bind:value={postQuality}>
+              <select id="post-quality" bind:value={postQuality} on:change={() => qualityAutoFilled = false}>
                 <option value={0}>-- Choisir --</option>
                 {#each qualityOptions as q}
                   <option value={q.id}>{q.name}</option>
@@ -2527,6 +2644,28 @@
   }
   .btn-open-admin:hover { filter: brightness(1.08); }
   .hyd-id-row { display: flex; gap: 6px; }
+  .hyd-type-toggle {
+    display: flex; gap: 6px; margin: 6px 0 8px;
+  }
+  .hyd-type-toggle label {
+    flex: 1;
+    display: flex; align-items: center; justify-content: center; gap: 4px;
+    padding: 6px 10px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-size: 12px; font-weight: 500;
+    color: var(--text2);
+    cursor: pointer;
+    transition: all 0.15s ease;
+    user-select: none;
+  }
+  .hyd-type-toggle label input { display: none; }
+  .hyd-type-toggle label:hover { background: rgba(255,255,255,0.04); }
+  .hyd-type-toggle label.active {
+    background: rgba(126,240,192,0.10);
+    border-color: rgba(126,240,192,0.5);
+    color: var(--text);
+  }
 
   /* Post options */
   .post-options {

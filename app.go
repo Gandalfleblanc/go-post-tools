@@ -56,7 +56,7 @@ import (
 // IMPORTANT : doit être en sync avec wails.json `productVersion`. Si tu bump
 // l'un, bump l'autre — sinon l'auto-update boucle (compare current=Version
 // vs latest=tag GitHub).
-const Version = "6.1.0"
+const Version = "6.1.1"
 
 type App struct {
 	ctx         context.Context
@@ -1039,6 +1039,8 @@ func (a *App) HydrackerGetByID(id int) (*api.PartialTitle, error) {
 		Poster:      title.Poster,
 		ReleaseDate: title.ReleaseDate,
 		Score:       title.Score,
+		TmdbID:      title.TmdbID,
+		ImdbID:      title.ImdbID,
 	}
 	return partial, nil
 }

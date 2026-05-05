@@ -63,6 +63,8 @@ type PartialTitle struct {
 	Score              float64 `json:"score,omitempty"`
 	Runtime            int     `json:"runtime,omitempty"`
 	LastContentAddedAt string  `json:"last_content_added_at,omitempty"`
+	TmdbID             int     `json:"tmdb_id,omitempty"`
+	ImdbID             string  `json:"imdb_id,omitempty"`
 }
 
 type FullTitle struct {

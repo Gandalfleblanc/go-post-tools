@@ -373,6 +373,8 @@ export namespace api {
 	    score?: number;
 	    runtime?: number;
 	    last_content_added_at?: string;
+	    tmdb_id?: number;
+	    imdb_id?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new PartialTitle(source);
@@ -388,6 +390,8 @@ export namespace api {
 	        this.score = source["score"];
 	        this.runtime = source["runtime"];
 	        this.last_content_added_at = source["last_content_added_at"];
+	        this.tmdb_id = source["tmdb_id"];
+	        this.imdb_id = source["imdb_id"];
 	    }
 	}
 	
