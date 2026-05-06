@@ -569,11 +569,12 @@
     } else if (/\bweb([-.]?(?:rip|dl))?\b/.test(name) || name.includes('.web.')) {
       // WEB 1080p prioritaire si résolution présente (films ET séries)
       const is1080p = /\b1080p\b/i.test(file.name)
-      const isLight = bitrate > 0 && bitrate <= 3000 // ≤3000 kbps = WEB Light
+      // Light : SEULEMENT pour WEB 1080p non-x265 avec bitrate ≤ 3000.
+      // Les x265 restent WEB 1080p x265 quel que soit leur bitrate (l'encodage
+      // x265 a déjà un bitrate naturellement bas, c'est attendu).
+      const isLight = !isH265 && bitrate > 0 && bitrate <= 3000
       if (isLight) {
-        // Bitrate faible → variante Light en priorité (x265 ou pas)
-        if (isH265) qualID = findQual('web', '1080p', 'light', 'x265') || findQual('webrip', '1080p', 'light', 'x265')
-        if (!qualID) qualID = findQual('web', '1080p', 'light') || findQual('webrip', '1080p', 'light') || 94
+        qualID = findQual('web', '1080p', 'light') || findQual('webrip', '1080p', 'light') || 94
       } else {
         if (isH265) qualID = findQual('web', '1080p', 'x265') || findQual('webrip', '1080p', 'x265') || findQual('web', 'x265') || findQual('webrip', 'x265')
         if (!qualID && is1080p) qualID = findQual('web', '1080p') || findQual('webrip', '1080p')
@@ -607,16 +608,17 @@
   }
 
   // Override : MediaInfo arrive APRÈS la première détection (qui se fait sur le
-  // nom du fichier, sans bitrate). Si WEB + bitrate ≤ 3000 kbps détecté ensuite
-  // par MediaInfo et que l'user n'a pas touché au select, bascule sur WEB Light.
+  // nom du fichier, sans bitrate). Si WEB 1080p NON-x265 + bitrate ≤ 3000 kbps,
+  // bascule sur WEB 1080p Light. Les x265 restent x265 (leur bitrate bas est
+  // normal pour ce codec).
   $: if (qualityOptions.length && file?.name && mediaInfo?.bitrate && qualityAutoFilled && postQuality > 0) {
     const bitrate = parseInt(String(mediaInfo.bitrate).replace(/[^0-9]/g, '')) || 0
     const name = file.name.toLowerCase()
     const isWeb = /\bweb([-.]?(?:rip|dl))?\b/.test(name) || name.includes('.web.')
-    if (isWeb && bitrate > 0 && bitrate <= 3000) {
+    const isH265 = /\b(x265|h\.?265|hevc)\b/i.test(file.name)
+    if (isWeb && !isH265 && bitrate > 0 && bitrate <= 3000) {
       const currentName = (qualityOptions.find(q => q.id === postQuality)?.name || '').toLowerCase()
       if (!currentName.includes('light')) {
-        const isH265 = /\b(x265|h\.?265|hevc)\b/i.test(file.name)
         const findQual = (...kw) => {
           const lc = kw.map(k => k.toLowerCase().replace(/[\s-]/g, ''))
           return qualityOptions.find(o => {
@@ -624,9 +626,7 @@
             return lc.every(k => n.includes(k))
           })?.id || 0
         }
-        let lightID = 0
-        if (isH265) lightID = findQual('web', '1080p', 'light', 'x265') || findQual('webrip', '1080p', 'light', 'x265')
-        if (!lightID) lightID = findQual('web', '1080p', 'light') || findQual('webrip', '1080p', 'light') || 94
+        const lightID = findQual('web', '1080p', 'light') || findQual('webrip', '1080p', 'light') || 94
         if (lightID && lightID !== postQuality) {
           postQuality = lightID
         }
