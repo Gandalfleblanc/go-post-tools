@@ -56,7 +56,7 @@ import (
 // IMPORTANT : doit être en sync avec wails.json `productVersion`. Si tu bump
 // l'un, bump l'autre — sinon l'auto-update boucle (compare current=Version
 // vs latest=tag GitHub).
-const Version = "6.1.2"
+const Version = "6.1.3"
 
 type App struct {
 	ctx         context.Context
@@ -2346,39 +2346,65 @@ func (a *App) findExistingTorrent(titleID int, infoHash, torrentName string) (in
 	targetHash := strings.ToLower(infoHash)
 	targetName := strings.TrimSpace(torrentName)
 
-	// Essai 1 : endpoint public /content/torrents (a info_hash si opt-in API)
-	if targetHash != "" {
-		if res, err := a.client.GetTorrents(titleID, api.ContentFilter{}); err == nil {
-			for _, t := range res.Torrents {
-				if strings.ToLower(t.InfoHash) == targetHash || strings.ToLower(t.Hash) == targetHash {
-					return t.ID, nil
-				}
-			}
+	// Variantes du nom pour matching robuste : avec .mkv, sans extension,
+	// car Hydracker peut stocker l'un ou l'autre selon les versions.
+	nameNoExt := targetName
+	for _, ext := range []string{".mkv", ".mp4", ".avi"} {
+		if strings.HasSuffix(strings.ToLower(nameNoExt), ext) {
+			nameNoExt = nameNoExt[:len(nameNoExt)-len(ext)]
+			break
 		}
+	}
+	matchName := func(remote string) bool {
+		r := strings.TrimSpace(remote)
+		if r == "" {
+			return false
+		}
+		return strings.EqualFold(r, targetName) || strings.EqualFold(r, nameNoExt)
 	}
 
-	// Essai 2 : /admin/torrents (a torrent_name, pas forcément info_hash).
-	// On match par title_id + torrent_name (qui reste stable entre retries).
-	if targetName != "" {
-		for page := 1; page <= 3; page++ {
-			res, err := a.client.ListAdminTorrents("", page)
-			if err != nil {
-				break
+	// Stratégie : on prend TOUS les matches (par hash ou nom) sur /admin/torrents
+	// et on retourne le plus RÉCENT (max ID, qui correspond au dernier auto-increment).
+	// Ça évite de retomber sur un torrent partiellement supprimé d'une tentative
+	// précédente alors qu'un nouveau a été créé dans la foulée.
+	bestID := 0
+	for page := 1; page <= 5; page++ {
+		res, err := a.client.ListAdminTorrents("", page)
+		if err != nil {
+			break
+		}
+		for _, t := range res.Pagination.Data {
+			if t.TitleID != titleID {
+				continue
 			}
-			for _, t := range res.Pagination.Data {
-				if t.TitleID != titleID {
-					continue
-				}
-				if strings.EqualFold(t.Name, targetName) {
-					return t.ID, nil
+			hashMatch := targetHash != "" && (strings.ToLower(t.InfoHash) == targetHash || strings.ToLower(t.Hash) == targetHash)
+			if hashMatch || matchName(t.Name) {
+				if t.ID > bestID {
+					bestID = t.ID
 				}
 			}
-			if res.Pagination.CurrentPage >= res.Pagination.LastPage {
-				break
+		}
+		if res.Pagination.CurrentPage >= res.Pagination.LastPage {
+			break
+		}
+	}
+	if bestID > 0 {
+		return bestID, nil
+	}
+
+	// Fallback : /content/torrents (n'inclut peut-être pas le dernier post si
+	// cache, mais utile si admin/torrents est inaccessible).
+	if res, err := a.client.GetTorrents(titleID, api.ContentFilter{}); err == nil {
+		for _, t := range res.Torrents {
+			hashMatch := targetHash != "" && (strings.ToLower(t.InfoHash) == targetHash || strings.ToLower(t.Hash) == targetHash)
+			if hashMatch || matchName(t.Name) {
+				if t.ID > bestID {
+					bestID = t.ID
+				}
 			}
 		}
 	}
-	return 0, nil
+	return bestID, nil
 }
 
 func (a *App) SelectAnyTorrentFile() (string, error) {
@@ -3911,9 +3937,56 @@ func (a *App) PostTorrentWorkflow(titleID, qualite int, langues, subs []string, 
 	}
 
 	// 3. Post sur Hydracker
-	emit("post", "Post sur Hydracker…")
+	// Log les langues/subs envoyés pour diagnostiquer les rejets serveur
+	// (Hydracker renvoie parfois 500 sans détail si une valeur n'est pas reconnue,
+	// mais le torrent finit quand même posté avec langues/subs vides).
+	emit("post", fmt.Sprintf("Post Hydracker : langues=[%s] · subs=[%s]", strings.Join(langues, ", "), strings.Join(subs, ", ")))
 	uploaded, err := a.client.UploadTorrent(titleID, qualite, langues, subs, torrentPath, nfo, saison, episode, fullSaison)
 	if err != nil {
+		// Hydracker bug connu : le serveur renvoie 500 mais commit quand même le
+		// torrent (sans les langues/subs). On le supprime pour ne laisser AUCUNE
+		// trace partielle puis on propage l'erreur — pas de seedbox push, rien.
+		if mi, merr := metainfo.LoadFromFile(torrentPath); merr == nil {
+			info, _ := mi.UnmarshalInfo()
+			postedHash := mi.HashInfoBytes().HexString()
+			emit("post_cleanup", fmt.Sprintf("Hydracker 500 — recherche du torrent partiel (hash=%s, name=%s)…", postedHash[:8], info.Name))
+			// Retry jusqu'à 3 fois (DB Hydracker peut avoir un léger délai)
+			var existingID int
+			for attempt := 1; attempt <= 3; attempt++ {
+				existingID, _ = a.findExistingTorrent(titleID, postedHash, info.Name)
+				if existingID > 0 {
+					break
+				}
+				if attempt < 3 {
+					time.Sleep(time.Duration(attempt) * 2 * time.Second)
+				}
+			}
+			if existingID > 0 {
+				emit("post_cleanup", fmt.Sprintf("Suppression du torrent partiel #%d…", existingID))
+				delErr := a.client.DeleteTorrent(existingID)
+				if delErr != nil {
+					emit("post_cleanup_warn", fmt.Sprintf("Suppression #%d échouée : %s", existingID, delErr.Error()))
+				}
+				// Vérification : après le DELETE, le torrent doit disparaître. Si on
+				// le retrouve toujours, c'est un soft-delete Hydracker → on tente une
+				// désactivation explicite via PATCH active=0 (cache l'entrée publique).
+				time.Sleep(800 * time.Millisecond)
+				stillThere, _ := a.findExistingTorrent(titleID, postedHash, info.Name)
+				if stillThere == existingID {
+					emit("post_cleanup_warn", fmt.Sprintf("DELETE renvoie OK mais #%d persiste → désactivation explicite (active=0)…", existingID))
+					inactive := 0
+					if uerr := a.client.UpdateTorrent(existingID, api.UpdateTorrentPayload{Active: &inactive}); uerr != nil {
+						emit("post_cleanup_warn", fmt.Sprintf("Désactivation #%d échouée : %s", existingID, uerr.Error()))
+					} else {
+						emit("post_cleanup_done", fmt.Sprintf("Torrent partiel #%d désactivé (active=0)", existingID))
+					}
+				} else if delErr == nil {
+					emit("post_cleanup_done", fmt.Sprintf("Torrent partiel #%d supprimé", existingID))
+				}
+			} else {
+				emit("post_cleanup_warn", "Torrent partiel introuvable côté Hydracker — vérifie manuellement /admin/torrents")
+			}
+		}
 		emit("error", fmt.Sprintf("Hydracker : %s", err.Error()))
 		return nil, fmt.Errorf("hydracker: %w", err)
 	}

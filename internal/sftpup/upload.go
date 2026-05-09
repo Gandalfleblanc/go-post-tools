@@ -176,6 +176,11 @@ func Upload(ctx context.Context, host string, port int, user, password, remotePa
 		}()
 		stopWatch := func() { close(watchDone) }
 
+		// Si le fichier existe déjà (autre owner ex: démon Nextcloud), on ne peut
+		// pas le truncate → permission denied. On le supprime d'abord (write sur
+		// le dossier suffit), puis on crée frais.
+		_ = sftpClient.Remove(remoteFull)
+
 		// O_TRUNC à chaque tentative : le resume O_APPEND est incompatible avec
 		// les concurrent writes (les WriteAt à des offsets parallèles ne marchent
 		// qu'avec un fichier ouvert en O_WRONLY|O_CREATE|O_TRUNC).
